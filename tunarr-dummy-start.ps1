@@ -1,13 +1,21 @@
-# Start VLC with dummy interface for multiple channels
+
 $vlcPath = "C:\Program Files\VideoLAN\VLC\vlc.exe"
 $baseUrl = "http://10.0.0.174:8000/stream/channels"
-$commonArgs = @("-I", "dummy", "--dummy-quiet", "--vout", "none")
+$commonArgs = @("-I", "dummy", "--dummy-quiet", "--vout", "none", "--no-audio")
 
-# Start VLC instances for channels 1-6
-for ($i = 1; $i -le 6; $i++) {
+
+$CMAX = 6 # Number of channels
+$WAITFORIT = 500  # Delay in milliseconds between dummy instance launches
+$TIMEWAIT = 300  # Initial wait time in seconds before starting dummy instances
+
+Write-Host "Waiting for $TIMEWAIT seconds before starting dummy VLC instances..."
+Start-Sleep -Seconds $TIMEWAIT  # Initial wait before starting dummy instances
+
+# Launching scripted VLC dummy instances
+for ($i = 1; $i -le $CMAX; $i++) {
     $channelUrl = "$baseUrl/$i.m3u8"
-    $args = @($channelUrl) + $commonArgs
+    $args = @($channelUrl) + $commonArgs # ignore error 
     Start-Process -FilePath $vlcPath -ArgumentList $args
     Write-Host "Started VLC for channel $i"
-    Start-Sleep -Milliseconds 500  # Slight delay between launches
+    Start-Sleep -Milliseconds $WAITFORIT 
 }
