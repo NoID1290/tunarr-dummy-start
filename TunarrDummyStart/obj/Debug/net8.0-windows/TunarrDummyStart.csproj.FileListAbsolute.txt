@@ -1,0 +1,15 @@
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\bin\Debug\net8.0-windows\TunarrDummyStart.exe
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\bin\Debug\net8.0-windows\TunarrDummyStart.deps.json
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\bin\Debug\net8.0-windows\TunarrDummyStart.runtimeconfig.json
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\bin\Debug\net8.0-windows\TunarrDummyStart.dll
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\bin\Debug\net8.0-windows\TunarrDummyStart.pdb
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\TunarrDummyStart.GeneratedMSBuildEditorConfig.editorconfig
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\TunarrDummyStart.AssemblyInfoInputs.cache
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\TunarrDummyStart.AssemblyInfo.cs
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\TunarrDummyStart.csproj.CoreCompileInputs.cache
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\TunarrDummyStart.sourcelink.json
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\TunarrDummyStart.dll
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\refint\TunarrDummyStart.dll
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\TunarrDummyStart.pdb
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\TunarrDummyStart.genruntimeconfig.cache
+S:\VScodeProjects\tunarr-dummy-start\TunarrDummyStart\obj\Debug\net8.0-windows\ref\TunarrDummyStart.dll

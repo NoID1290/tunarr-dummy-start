@@ -1,0 +1,10 @@
+﻿{
+  "BaseUrl": "http://10.0.0.60:8000/stream/channels",
+  "ChannelCount": 9,
+  "StartupDelaySeconds": 2,
+  "StaggerDelayMs": 500,
+  "RetryCount": 2,
+  "FfmpegPath": "",
+  "AutoStartOnLaunch": true,
+  "StartWithWindows": true
+}
