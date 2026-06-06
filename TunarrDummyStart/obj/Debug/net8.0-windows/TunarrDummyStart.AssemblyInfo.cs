@@ -10,10 +10,12 @@
 using System;
 using System.Reflection;
 
-[assembly: System.Reflection.AssemblyCompanyAttribute("TunarrDummyStart")]
+[assembly: System.Reflection.AssemblyCompanyAttribute("NoID Softwork")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
+[assembly: System.Reflection.AssemblyCopyrightAttribute("Copyright © NoID Softwork 2020-2026")]
+[assembly: System.Reflection.AssemblyDescriptionAttribute("A dummy start for Tunarr development.")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6595b07ce67cd7b7d8cfee66189a41f5aeee9c13")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+cee80da5cd47b2c3ee67ecd9c761bd3eebf5b93a")]
 [assembly: System.Reflection.AssemblyProductAttribute("TunarrDummyStart")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TunarrDummyStart")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

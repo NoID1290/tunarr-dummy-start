@@ -12,7 +12,7 @@ It is intentionally lightweight and does not produce real video output. The app 
 - FFmpeg keep-alive client mode (no output file)
 - Auto fallback: reconnect retry per channel, then skip and continue
 - Stop button with safe cancellation
-- Local `config.json` persistence
+- Windows Registry persistence for app settings
 - Auto start keep-alive at app launch (optional)
 - Start app with Windows login (optional)
 - Tray-first behavior: minimize/close sends app to tray; exit via tray menu `Quit`
@@ -66,9 +66,13 @@ If a channel disconnects or fails to connect:
 2. If still failing, log `skipped after retry limit`
 3. Continue with the next channel
 
-## Config File
+## Config Storage
 
-`config.json` is created next to the app executable on first run and reloaded on startup.
+Settings are saved and loaded from:
+
+`HKEY_CURRENT_USER\Software\NoID Softwork\TunarrDummyStart`
+
+The key is created on first run if it does not exist.
 
 ## Notes
 

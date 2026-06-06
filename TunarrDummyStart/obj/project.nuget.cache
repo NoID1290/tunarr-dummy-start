@@ -1,8 +1,13 @@
 {
   "version": 2,
-  "dgSpecHash": "Ik8nOHuHBrs=",
+  "dgSpecHash": "JC6MZr/4K/8=",
   "success": true,
-  "projectFilePath": "s:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
-  "expectedPackageFiles": [],
+  "projectFilePath": "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\90lec\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.23\\microsoft.net.illink.tasks.8.0.23.nupkg.sha512",
+    "C:\\Users\\90lec\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.23\\microsoft.netcore.app.runtime.win-x64.8.0.23.nupkg.sha512",
+    "C:\\Users\\90lec\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.23\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.23.nupkg.sha512",
+    "C:\\Users\\90lec\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.23\\microsoft.aspnetcore.app.runtime.win-x64.8.0.23.nupkg.sha512"
+  ],
   "logs": []
 }

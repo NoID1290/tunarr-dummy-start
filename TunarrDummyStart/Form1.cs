@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Text;
-using System.Text.Json;
 using Microsoft.Win32;
 
 namespace TunarrDummyStart;
@@ -8,8 +6,8 @@ namespace TunarrDummyStart;
 public partial class Form1 : Form
 {
     private const string StartupRegistryValueName = "TunarrDummyStart";
+    private const string ConfigRegistryPath = @"Software\NoID Softwork\TunarrDummyStart";
 
-    private readonly string _configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
     private readonly object _processSync = new();
     private readonly Dictionary<int, Process> _activeProcesses = new();
     private readonly bool _startHidden;
@@ -131,7 +129,7 @@ public partial class Form1 : Form
 
         SaveConfig(config);
         ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: true);
-        AppendLog($"Config saved to {_configPath}");
+        AppendLog($"Config saved to Windows Registry (HKCU\\{ConfigRegistryPath})");
     }
 
     private void Form1_FormClosing(object sender, FormClosingEventArgs e)
@@ -467,37 +465,87 @@ public partial class Form1 : Form
 
     private AppConfig LoadConfig()
     {
-        AppConfig config;
-        if (!File.Exists(_configPath))
-        {
-            config = AppConfig.CreateDefault();
-            SaveConfig(config);
-            ApplyConfigToUi(config);
-            AppendLog($"Created default config at {_configPath}");
-            return config;
-        }
+        AppConfig config = AppConfig.CreateDefault();
 
         try
         {
-            string json = File.ReadAllText(_configPath, Encoding.UTF8);
-            config = JsonSerializer.Deserialize<AppConfig>(json) ?? AppConfig.CreateDefault();
+            using RegistryKey? key = Registry.CurrentUser.OpenSubKey(ConfigRegistryPath, writable: false);
+            if (key is null)
+            {
+                SaveConfig(config);
+                ApplyConfigToUi(config);
+                AppendLog($"Created default config in Windows Registry (HKCU\\{ConfigRegistryPath})");
+                return config;
+            }
+
+            config = new AppConfig
+            {
+                BaseUrl = ReadString(key, nameof(AppConfig.BaseUrl), config.BaseUrl),
+                ChannelCount = ReadInt(key, nameof(AppConfig.ChannelCount), config.ChannelCount),
+                StartupDelaySeconds = ReadInt(key, nameof(AppConfig.StartupDelaySeconds), config.StartupDelaySeconds),
+                StaggerDelayMs = ReadInt(key, nameof(AppConfig.StaggerDelayMs), config.StaggerDelayMs),
+                RetryCount = ReadInt(key, nameof(AppConfig.RetryCount), config.RetryCount),
+                FfmpegPath = ReadString(key, nameof(AppConfig.FfmpegPath), config.FfmpegPath),
+                AutoStartOnLaunch = ReadBool(key, nameof(AppConfig.AutoStartOnLaunch), config.AutoStartOnLaunch),
+                StartWithWindows = ReadBool(key, nameof(AppConfig.StartWithWindows), config.StartWithWindows)
+            };
         }
         catch (Exception ex)
         {
             config = AppConfig.CreateDefault();
-            AppendLog($"Failed to parse config; using defaults ({ex.Message})");
+            AppendLog($"Failed to load registry config; using defaults ({ex.Message})");
         }
 
         ApplyConfigToUi(config);
-        AppendLog($"Loaded config from {_configPath}");
+        AppendLog($"Loaded config from Windows Registry (HKCU\\{ConfigRegistryPath})");
         return config;
     }
 
     private void SaveConfig(AppConfig config)
     {
-        JsonSerializerOptions options = new() { WriteIndented = true };
-        string json = JsonSerializer.Serialize(config, options);
-        File.WriteAllText(_configPath, json, Encoding.UTF8);
+        using RegistryKey? key = Registry.CurrentUser.CreateSubKey(ConfigRegistryPath, writable: true);
+        if (key is null)
+        {
+            throw new InvalidOperationException($"Could not open registry key HKCU\\{ConfigRegistryPath} for writing.");
+        }
+
+        key.SetValue(nameof(AppConfig.BaseUrl), config.BaseUrl, RegistryValueKind.String);
+        key.SetValue(nameof(AppConfig.ChannelCount), config.ChannelCount, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.StartupDelaySeconds), config.StartupDelaySeconds, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.StaggerDelayMs), config.StaggerDelayMs, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.RetryCount), config.RetryCount, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.FfmpegPath), config.FfmpegPath, RegistryValueKind.String);
+        key.SetValue(nameof(AppConfig.AutoStartOnLaunch), config.AutoStartOnLaunch ? 1 : 0, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.StartWithWindows), config.StartWithWindows ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    private static string ReadString(RegistryKey key, string valueName, string defaultValue)
+    {
+        string? value = key.GetValue(valueName) as string;
+        return string.IsNullOrWhiteSpace(value) ? defaultValue : value;
+    }
+
+    private static int ReadInt(RegistryKey key, string valueName, int defaultValue)
+    {
+        object? raw = key.GetValue(valueName);
+        return raw switch
+        {
+            int i => i,
+            string s when int.TryParse(s, out int parsed) => parsed,
+            _ => defaultValue
+        };
+    }
+
+    private static bool ReadBool(RegistryKey key, string valueName, bool defaultValue)
+    {
+        object? raw = key.GetValue(valueName);
+        return raw switch
+        {
+            int i => i != 0,
+            string s when int.TryParse(s, out int parsed) => parsed != 0,
+            string s when bool.TryParse(s, out bool parsed) => parsed,
+            _ => defaultValue
+        };
     }
 
     private void SetRunningState(bool isRunning)
