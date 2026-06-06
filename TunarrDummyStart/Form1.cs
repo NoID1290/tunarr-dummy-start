@@ -18,6 +18,7 @@ public partial class Form1 : Form
     private ContextMenuStrip? _trayMenu;
     private bool _allowClose;
     private bool _trayHintShown;
+    private List<string> _detectedHwAccels = new() { "None" };
 
     public Form1(bool startHidden = false)
     {
@@ -31,6 +32,7 @@ public partial class Form1 : Form
         AppConfig config = LoadConfig();
         ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: false);
         SetRunningState(isRunning: false);
+        _ = DetectAndPopulateHwAccelsAsync(config.HwAccel);
 
         if (_startHidden)
         {
@@ -51,6 +53,11 @@ public partial class Form1 : Form
         {
             txtFfmpegPath.Text = ofdFfmpeg.FileName;
         }
+    }
+
+    private async void btnDetectHwAccel_Click(object sender, EventArgs e)
+    {
+        await DetectAndPopulateHwAccelsAsync(cboHwAccel.SelectedItem as string);
     }
 
     private async void btnStart_Click(object sender, EventArgs e)
@@ -205,7 +212,7 @@ public partial class Form1 : Form
             token.ThrowIfCancellationRequested();
             AppendLog($"Channel {channel}: connecting (attempt {attempt}/{maxAttempts}) -> {url}");
 
-            ChannelRunResult result = await RunPersistentClientOnceAsync(channel, ffmpegExecutable, url, token);
+            ChannelRunResult result = await RunPersistentClientOnceAsync(channel, config, ffmpegExecutable, url, token);
             if (result.State == ChannelRunState.Canceled)
             {
                 AppendLog($"Channel {channel}: stopped");
@@ -228,14 +235,23 @@ public partial class Form1 : Form
         return $"{baseUrl.TrimEnd('/')}/{channel}.m3u8";
     }
 
-    private async Task<ChannelRunResult> RunPersistentClientOnceAsync(int channel, string ffmpegExecutable, string url, CancellationToken token)
+    private async Task<ChannelRunResult> RunPersistentClientOnceAsync(int channel, AppConfig config, string ffmpegExecutable, string url, CancellationToken token)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
+
+        string hwAccelArgs = BuildHwAccelArgs(config.HwAccel);
+        string threadsArg = config.ThreadsPerProcess > 0 ? $"-threads {config.ThreadsPerProcess}" : string.Empty;
+        var argParts = new List<string> { "-hide_banner", "-loglevel error", "-nostdin" };
+        if (!string.IsNullOrEmpty(threadsArg)) argParts.Add(threadsArg);
+        if (!string.IsNullOrEmpty(hwAccelArgs)) argParts.Add(hwAccelArgs);
+        argParts.Add($"-i \"{url}\"");
+        argParts.Add("-f null -");
+        string arguments = string.Join(" ", argParts);
 
         ProcessStartInfo startInfo = new()
         {
             FileName = ffmpegExecutable,
-            Arguments = $"-hide_banner -loglevel error -nostdin -i \"{url}\" -f null -",
+            Arguments = arguments,
             RedirectStandardError = true,
             RedirectStandardOutput = false,
             UseShellExecute = false,
@@ -346,6 +362,92 @@ public partial class Form1 : Form
         }
     }
 
+    private async Task DetectAndPopulateHwAccelsAsync(string? preferredSelection = null)
+    {
+        string? ffmpegExe = ResolveFfmpegExecutable(txtFfmpegPath.Text.Trim());
+        List<string> items = new() { "None" };
+
+        if (ffmpegExe is not null)
+        {
+            AppendLog("Detecting hardware acceleration backends...");
+            List<string> backends = await DetectHwAccelsAsync(ffmpegExe);
+            items.AddRange(backends);
+            AppendLog(backends.Count > 0
+                ? $"HW Accel detected: {string.Join(", ", backends)}"
+                : "HW Accel: no additional backends found.");
+        }
+        else
+        {
+            AppendLog("HW Accel detection skipped (ffmpeg not found).");
+        }
+
+        _detectedHwAccels = items;
+        string selection = preferredSelection ?? "None";
+        cboHwAccel.Items.Clear();
+        foreach (string item in _detectedHwAccels)
+        {
+            cboHwAccel.Items.Add(item);
+        }
+
+        cboHwAccel.SelectedItem = cboHwAccel.Items.Contains(selection) ? selection : cboHwAccel.Items[0];
+    }
+
+    private static async Task<List<string>> DetectHwAccelsAsync(string ffmpegExe)
+    {
+        List<string> result = new();
+        HashSet<string> knownUseful = new(StringComparer.OrdinalIgnoreCase)
+            { "d3d11va", "dxva2", "cuda", "qsv", "opencl", "vulkan" };
+
+        try
+        {
+            ProcessStartInfo psi = new()
+            {
+                FileName = ffmpegExe,
+                Arguments = "-hide_banner -hwaccels",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using Process proc = new() { StartInfo = psi };
+            proc.Start();
+            string stdout = await proc.StandardOutput.ReadToEndAsync();
+            await proc.WaitForExitAsync();
+
+            foreach (string line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string trimmed = line.Trim();
+                if (knownUseful.Contains(trimmed))
+                {
+                    result.Add(trimmed);
+                }
+            }
+        }
+        catch
+        {
+            // Detection failure is non-fatal
+        }
+
+        return result;
+    }
+
+    private static string BuildHwAccelArgs(string? hwAccel)
+    {
+        if (string.IsNullOrEmpty(hwAccel) || hwAccel.Equals("None", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        // Intel QuickSync requires an additional output format flag for the proper decode pipeline
+        if (hwAccel.Equals("qsv", StringComparison.OrdinalIgnoreCase))
+        {
+            return "-hwaccel qsv -hwaccel_output_format qsv";
+        }
+
+        return $"-hwaccel {hwAccel}";
+    }
+
     private string? ResolveFfmpegExecutable(string? configuredPath)
     {
         if (!string.IsNullOrWhiteSpace(configuredPath))
@@ -387,7 +489,9 @@ public partial class Form1 : Form
             RetryCount = Decimal.ToInt32(nudRetryCount.Value),
             FfmpegPath = txtFfmpegPath.Text.Trim(),
             AutoStartOnLaunch = chkAutoStartOnLaunch.Checked,
-            StartWithWindows = chkStartWithWindows.Checked
+            StartWithWindows = chkStartWithWindows.Checked,
+            HwAccel = cboHwAccel.SelectedItem as string ?? "None",
+            ThreadsPerProcess = Decimal.ToInt32(nudThreadsPerProcess.Value)
         };
     }
 
@@ -401,6 +505,12 @@ public partial class Form1 : Form
         txtFfmpegPath.Text = config.FfmpegPath;
         chkAutoStartOnLaunch.Checked = config.AutoStartOnLaunch;
         chkStartWithWindows.Checked = config.StartWithWindows;
+        nudThreadsPerProcess.Value = NormalizeNumericValue(nudThreadsPerProcess, config.ThreadsPerProcess);
+        // HwAccel items are populated after async detection; apply only if items are already loaded
+        if (cboHwAccel.Items.Contains(config.HwAccel))
+            cboHwAccel.SelectedItem = config.HwAccel;
+        else if (cboHwAccel.Items.Count > 0)
+            cboHwAccel.SelectedIndex = 0;
     }
 
     private static decimal NormalizeNumericValue(NumericUpDown control, int value)
@@ -487,7 +597,9 @@ public partial class Form1 : Form
                 RetryCount = ReadInt(key, nameof(AppConfig.RetryCount), config.RetryCount),
                 FfmpegPath = ReadString(key, nameof(AppConfig.FfmpegPath), config.FfmpegPath),
                 AutoStartOnLaunch = ReadBool(key, nameof(AppConfig.AutoStartOnLaunch), config.AutoStartOnLaunch),
-                StartWithWindows = ReadBool(key, nameof(AppConfig.StartWithWindows), config.StartWithWindows)
+                StartWithWindows = ReadBool(key, nameof(AppConfig.StartWithWindows), config.StartWithWindows),
+                HwAccel = ReadString(key, nameof(AppConfig.HwAccel), config.HwAccel),
+                ThreadsPerProcess = ReadInt(key, nameof(AppConfig.ThreadsPerProcess), config.ThreadsPerProcess)
             };
         }
         catch (Exception ex)
@@ -517,6 +629,8 @@ public partial class Form1 : Form
         key.SetValue(nameof(AppConfig.FfmpegPath), config.FfmpegPath, RegistryValueKind.String);
         key.SetValue(nameof(AppConfig.AutoStartOnLaunch), config.AutoStartOnLaunch ? 1 : 0, RegistryValueKind.DWord);
         key.SetValue(nameof(AppConfig.StartWithWindows), config.StartWithWindows ? 1 : 0, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.HwAccel), config.HwAccel, RegistryValueKind.String);
+        key.SetValue(nameof(AppConfig.ThreadsPerProcess), config.ThreadsPerProcess, RegistryValueKind.DWord);
     }
 
     private static string ReadString(RegistryKey key, string valueName, string defaultValue)
@@ -554,6 +668,7 @@ public partial class Form1 : Form
         btnStop.Enabled = isRunning;
         btnSaveConfig.Enabled = !isRunning;
         btnBrowseFfmpeg.Enabled = !isRunning;
+        btnDetectHwAccel.Enabled = !isRunning;
 
         txtBaseUrl.Enabled = !isRunning;
         txtFfmpegPath.Enabled = !isRunning;
@@ -561,8 +676,10 @@ public partial class Form1 : Form
         nudStartupDelay.Enabled = !isRunning;
         nudStaggerDelay.Enabled = !isRunning;
         nudRetryCount.Enabled = !isRunning;
+        nudThreadsPerProcess.Enabled = !isRunning;
         chkAutoStartOnLaunch.Enabled = !isRunning;
         chkStartWithWindows.Enabled = !isRunning;
+        cboHwAccel.Enabled = !isRunning;
     }
 
     private void InitializeTrayIcon()
@@ -719,6 +836,10 @@ public sealed class AppConfig
 
     public bool StartWithWindows { get; set; }
 
+    public string HwAccel { get; set; } = "None";
+
+    public int ThreadsPerProcess { get; set; }
+
     public static AppConfig CreateDefault()
     {
         return new AppConfig
@@ -730,7 +851,9 @@ public sealed class AppConfig
             RetryCount = 2,
             FfmpegPath = string.Empty,
             AutoStartOnLaunch = false,
-            StartWithWindows = false
+            StartWithWindows = false,
+            HwAccel = "None",
+            ThreadsPerProcess = 0
         };
     }
 }

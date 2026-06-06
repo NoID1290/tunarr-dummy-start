@@ -34,3 +34,4 @@ Thumbs.db
 TunarrDummyStart/bin/
 TunarrDummyStart/obj/
 
+dist/win-x64-single/TunarrDummyStart.exe

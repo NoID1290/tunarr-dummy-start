@@ -50,10 +50,16 @@ partial class Form1
         chkAutoStartOnLaunch = new CheckBox();
         chkStartWithWindows = new CheckBox();
         ofdFfmpeg = new OpenFileDialog();
+        lblHwAccel = new Label();
+        cboHwAccel = new ComboBox();
+        btnDetectHwAccel = new Button();
+        lblThreadsPerProcess = new Label();
+        nudThreadsPerProcess = new NumericUpDown();
         ((System.ComponentModel.ISupportInitialize)nudChannelCount).BeginInit();
         ((System.ComponentModel.ISupportInitialize)nudStartupDelay).BeginInit();
         ((System.ComponentModel.ISupportInitialize)nudStaggerDelay).BeginInit();
         ((System.ComponentModel.ISupportInitialize)nudRetryCount).BeginInit();
+        ((System.ComponentModel.ISupportInitialize)nudThreadsPerProcess).BeginInit();
         SuspendLayout();
         // 
         // lblBaseUrl
@@ -249,6 +255,53 @@ partial class Form1
         ofdFfmpeg.Filter = "Executable|*.exe|All files|*.*";
         ofdFfmpeg.Title = "Select ffmpeg.exe";
         // 
+        // lblHwAccel
+        // 
+        lblHwAccel.AutoSize = true;
+        lblHwAccel.Location = new Point(12, 158);
+        lblHwAccel.Name = "lblHwAccel";
+        lblHwAccel.Size = new Size(62, 15);
+        lblHwAccel.TabIndex = 20;
+        lblHwAccel.Text = "HW Accel:";
+        // 
+        // cboHwAccel
+        // 
+        cboHwAccel.DropDownStyle = ComboBoxStyle.DropDownList;
+        cboHwAccel.FormattingEnabled = true;
+        cboHwAccel.Items.AddRange(new object[] { "None" });
+        cboHwAccel.Location = new Point(80, 154);
+        cboHwAccel.Name = "cboHwAccel";
+        cboHwAccel.Size = new Size(170, 23);
+        cboHwAccel.TabIndex = 21;
+        cboHwAccel.SelectedIndex = 0;
+        // 
+        // btnDetectHwAccel
+        // 
+        btnDetectHwAccel.Location = new Point(256, 153);
+        btnDetectHwAccel.Name = "btnDetectHwAccel";
+        btnDetectHwAccel.Size = new Size(78, 25);
+        btnDetectHwAccel.TabIndex = 22;
+        btnDetectHwAccel.Text = "Detect";
+        btnDetectHwAccel.UseVisualStyleBackColor = true;
+        btnDetectHwAccel.Click += btnDetectHwAccel_Click;
+        // 
+        // lblThreadsPerProcess
+        // 
+        lblThreadsPerProcess.AutoSize = true;
+        lblThreadsPerProcess.Location = new Point(348, 158);
+        lblThreadsPerProcess.Name = "lblThreadsPerProcess";
+        lblThreadsPerProcess.Size = new Size(185, 15);
+        lblThreadsPerProcess.TabIndex = 23;
+        lblThreadsPerProcess.Text = "Threads / Process (0 = auto):";
+        // 
+        // nudThreadsPerProcess
+        // 
+        nudThreadsPerProcess.Location = new Point(539, 154);
+        nudThreadsPerProcess.Maximum = new decimal(new int[] { 32, 0, 0, 0 });
+        nudThreadsPerProcess.Name = "nudThreadsPerProcess";
+        nudThreadsPerProcess.Size = new Size(60, 23);
+        nudThreadsPerProcess.TabIndex = 24;
+        // 
         // Form1
         // 
         AutoScaleDimensions = new SizeF(7F, 15F);
@@ -256,6 +309,11 @@ partial class Form1
         ClientSize = new Size(832, 550);
         Controls.Add(chkStartWithWindows);
         Controls.Add(chkAutoStartOnLaunch);
+        Controls.Add(nudThreadsPerProcess);
+        Controls.Add(lblThreadsPerProcess);
+        Controls.Add(btnDetectHwAccel);
+        Controls.Add(cboHwAccel);
+        Controls.Add(lblHwAccel);
         Controls.Add(lblLog);
         Controls.Add(txtLog);
         Controls.Add(btnSaveConfig);
@@ -284,6 +342,7 @@ partial class Form1
         ((System.ComponentModel.ISupportInitialize)nudStartupDelay).EndInit();
         ((System.ComponentModel.ISupportInitialize)nudStaggerDelay).EndInit();
         ((System.ComponentModel.ISupportInitialize)nudRetryCount).EndInit();
+        ((System.ComponentModel.ISupportInitialize)nudThreadsPerProcess).EndInit();
         ResumeLayout(false);
         PerformLayout();
     }
@@ -311,4 +370,9 @@ partial class Form1
     private CheckBox chkAutoStartOnLaunch;
     private CheckBox chkStartWithWindows;
     private OpenFileDialog ofdFfmpeg;
+    private Label lblHwAccel;
+    private ComboBox cboHwAccel;
+    private Button btnDetectHwAccel;
+    private Label lblThreadsPerProcess;
+    private NumericUpDown nudThreadsPerProcess;
 }
