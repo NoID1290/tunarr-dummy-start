@@ -83,7 +83,7 @@ public partial class Form1 : Form
             return;
         }
 
-        AppConfig config = ReadConfigFromUi();
+        AppConfig config = _configStore.LoadConfig(AppendLog);
         string? validationMessage = ValidateConfig(config);
         if (validationMessage is not null)
         {
