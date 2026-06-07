@@ -1,6 +1,6 @@
 # Tunarr Dummy Start (C# WinForms + FFmpeg)
 
-This project is a Windows Forms dummy launcher that keeps persistent FFmpeg clients connected to Tunarr.
+Dummy launcher that keeps persistent FFmpeg clients connected to Tunarr.
 
 It is intentionally lightweight and does not produce real video output. The app continuously consumes stream URLs to keep Tunarr encoding alive when no real clients are present.
 

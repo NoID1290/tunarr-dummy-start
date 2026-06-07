@@ -13,9 +13,9 @@
     <Platform>x64</Platform>
     <UseAppHost>true</UseAppHost>
     <RootNamespace>TunarrDummyStart</RootNamespace>
-    <ProductVersion>1.0.0</ProductVersion>
-    <Version>1.0.0</Version>
-    <FileVersion>1.0.0.0</FileVersion>
+    <ProductVersion>1.0</ProductVersion>
+    <Version>1.0</Version>
+    <FileVersion>1.0</FileVersion>
     <Authors>NoID Softwork</Authors>
     <Company>NoID Softwork</Company>
     <Description>A dummy start for Tunarr development.</Description>
@@ -25,14 +25,26 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(PublishProtocol)' != '' OR '$(Publish)' == 'true'">
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>Link</TrimMode>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <CompressionLevel>Optimal</CompressionLevel>
     <DebugType>None</DebugType>
     <DebugSymbols>false</DebugSymbols>
     <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
     <PublishDir>$(MSBuildProjectDirectory)\..\dist\win-x64-single\</PublishDir>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
 </Project>

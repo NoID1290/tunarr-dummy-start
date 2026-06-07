@@ -8,8 +8,12 @@ public partial class Form1 : Form
     private const string StartupRegistryValueName = "TunarrDummyStart";
     private const string ConfigRegistryPath = @"Software\NoID Softwork\TunarrDummyStart";
 
+    private readonly RegistryConfigStore _configStore = new();
+    private readonly FfmpegService _ffmpegService = new();
+    private readonly ChannelRunnerService _channelRunner;
     private readonly object _processSync = new();
     private readonly Dictionary<int, Process> _activeProcesses = new();
+    private readonly Dictionary<int, ChannelStatusCard> _channelStatusCards = new();
     private readonly bool _startHidden;
 
     private CancellationTokenSource? _runCancellation;
@@ -19,18 +23,24 @@ public partial class Form1 : Form
     private bool _allowClose;
     private bool _trayHintShown;
     private List<string> _detectedHwAccels = new() { "None" };
+    private bool _isLoadingConfig;
 
     public Form1(bool startHidden = false)
     {
         _startHidden = startHidden;
         InitializeComponent();
+        _channelRunner = new ChannelRunnerService(AppendLog, UpdateChannelStatus);
+        cboHwAccel.SelectedIndexChanged += cboHwAccel_SelectedIndexChanged;
         InitializeTrayIcon();
     }
 
     private void Form1_Load(object sender, EventArgs e)
     {
-        AppConfig config = LoadConfig();
-        ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: false);
+        _isLoadingConfig = true;
+        AppConfig config = _configStore.LoadConfig(AppendLog);
+        ApplyConfigToUi(config);
+        InitializeChannelStatusCards(config.ChannelCount);
+        _configStore.ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: false, AppendLog);
         SetRunningState(isRunning: false);
         _ = DetectAndPopulateHwAccelsAsync(config.HwAccel);
 
@@ -81,21 +91,22 @@ public partial class Form1 : Form
             return;
         }
 
-        string? ffmpegExecutable = ResolveFfmpegExecutable(config.FfmpegPath);
+        string? ffmpegExecutable = _ffmpegService.ResolveExecutable(config.FfmpegPath);
         if (ffmpegExecutable is null)
         {
             AppendLog("Unable to resolve ffmpeg.exe. Set a valid path or add ffmpeg to PATH.");
             return;
         }
 
-        SaveConfig(config);
-        ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: true);
+        _configStore.SaveConfig(config);
+        _configStore.ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: true, AppendLog);
 
         _runCancellation = new CancellationTokenSource();
         CancellationToken token = _runCancellation.Token;
         SetRunningState(isRunning: true);
+        InitializeChannelStatusCards(config.ChannelCount);
 
-        _runTask = RunKeepAliveLoopAsync(config, ffmpegExecutable, token);
+        _runTask = _channelRunner.RunKeepAliveLoopAsync(config, ffmpegExecutable, token);
         try
         {
             await _runTask;
@@ -110,7 +121,7 @@ public partial class Form1 : Form
         }
         finally
         {
-            KillAllActiveProcesses();
+            _channelRunner.KillAllActiveProcesses();
             _runCancellation?.Dispose();
             _runCancellation = null;
             _runTask = null;
@@ -121,7 +132,7 @@ public partial class Form1 : Form
     private void btnStop_Click(object sender, EventArgs e)
     {
         _runCancellation?.Cancel();
-        KillAllActiveProcesses();
+        _channelRunner.KillAllActiveProcesses();
     }
 
     private void btnSaveConfig_Click(object sender, EventArgs e)
@@ -134,8 +145,8 @@ public partial class Form1 : Form
             return;
         }
 
-        SaveConfig(config);
-        ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: true);
+        _configStore.SaveConfig(config);
+        _configStore.ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: true, AppendLog);
         AppendLog($"Config saved to Windows Registry (HKCU\\{ConfigRegistryPath})");
     }
 
@@ -151,7 +162,7 @@ public partial class Form1 : Form
         if (_runTask is not null && !_runTask.IsCompleted)
         {
             _runCancellation?.Cancel();
-            KillAllActiveProcesses();
+            _channelRunner.KillAllActiveProcesses();
         }
 
         if (_trayIcon is not null)
@@ -171,6 +182,7 @@ public partial class Form1 : Form
     private async Task RunKeepAliveLoopAsync(AppConfig config, string ffmpegExecutable, CancellationToken token)
     {
         AppendLog($"Starting keep-alive run. Channels={config.ChannelCount}, StartupDelay={config.StartupDelaySeconds}s, Stagger={config.StaggerDelayMs}ms, Retry={config.RetryCount}");
+        InitializeChannelStatusCards(config.ChannelCount);
 
         if (config.StartupDelaySeconds > 0)
         {
@@ -204,29 +216,35 @@ public partial class Form1 : Form
 
     private async Task RunChannelWorkerAsync(int channel, AppConfig config, string ffmpegExecutable, CancellationToken token)
     {
-        string url = BuildChannelUrl(config.BaseUrl, channel);
+        string url = FfmpegService.BuildChannelUrl(config.BaseUrl, channel);
         int maxAttempts = config.RetryCount + 1;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
             token.ThrowIfCancellationRequested();
+            UpdateChannelStatus(channel, new ChannelStatusUpdate(channel, ChannelRunState.Connecting, attempt, maxAttempts, $"Connecting to {url}", null, false, TimeSpan.Zero, DateTimeOffset.Now));
             AppendLog($"Channel {channel}: connecting (attempt {attempt}/{maxAttempts}) -> {url}");
 
             ChannelRunResult result = await RunPersistentClientOnceAsync(channel, config, ffmpegExecutable, url, token);
             if (result.State == ChannelRunState.Canceled)
             {
+                UpdateChannelStatus(channel, new ChannelStatusUpdate(channel, ChannelRunState.Canceled, attempt, maxAttempts, "Stopped", result.ExitCode, result.ConnectionEstablished, result.RunDuration, DateTimeOffset.Now));
                 AppendLog($"Channel {channel}: stopped");
                 return;
             }
 
+            UpdateChannelStatus(channel, new ChannelStatusUpdate(channel, result.State, attempt, maxAttempts, result.ErrorSummary, result.ExitCode, result.ConnectionEstablished, result.RunDuration, DateTimeOffset.Now));
             AppendLog($"Channel {channel}: disconnected after {result.RunDuration.TotalSeconds:F1}s (exit={result.ExitCode}, connected={result.ConnectionEstablished}) -> {result.ErrorSummary}");
 
             if (attempt < maxAttempts)
             {
-                await Task.Delay(500, token);
+                UpdateChannelStatus(channel, new ChannelStatusUpdate(channel, ChannelRunState.Retrying, attempt, maxAttempts, $"Waiting {config.RetryDelayMs} ms before retry", result.ExitCode, result.ConnectionEstablished, result.RunDuration, DateTimeOffset.Now));
+                AppendLog($"Channel {channel}: waiting {config.RetryDelayMs} ms before retry.");
+                await Task.Delay(config.RetryDelayMs, token);
             }
         }
 
+        UpdateChannelStatus(channel, new ChannelStatusUpdate(channel, ChannelRunState.Stopped, maxAttempts, maxAttempts, "Skipped after retry limit", null, false, TimeSpan.Zero, DateTimeOffset.Now));
         AppendLog($"Channel {channel}: skipped after retry limit");
     }
 
@@ -239,7 +257,7 @@ public partial class Form1 : Form
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
 
-        string hwAccelArgs = BuildHwAccelArgs(config.HwAccel);
+        string hwAccelArgs = FfmpegService.BuildHwAccelArgs(config.HwAccel);
         string threadsArg = config.ThreadsPerProcess > 0 ? $"-threads {config.ThreadsPerProcess}" : string.Empty;
         var argParts = new List<string> { "-hide_banner", "-loglevel error", "-nostdin" };
         if (!string.IsNullOrEmpty(threadsArg)) argParts.Add(threadsArg);
@@ -364,118 +382,40 @@ public partial class Form1 : Form
 
     private async Task DetectAndPopulateHwAccelsAsync(string? preferredSelection = null)
     {
-        string? ffmpegExe = ResolveFfmpegExecutable(txtFfmpegPath.Text.Trim());
-        List<string> items = new() { "None" };
-
-        if (ffmpegExe is not null)
-        {
-            AppendLog("Detecting hardware acceleration backends...");
-            List<string> backends = await DetectHwAccelsAsync(ffmpegExe);
-            items.AddRange(backends);
-            AppendLog(backends.Count > 0
-                ? $"HW Accel detected: {string.Join(", ", backends)}"
-                : "HW Accel: no additional backends found.");
-        }
-        else
-        {
-            AppendLog("HW Accel detection skipped (ffmpeg not found).");
-        }
-
-        _detectedHwAccels = items;
-        string selection = preferredSelection ?? "None";
-        cboHwAccel.Items.Clear();
-        foreach (string item in _detectedHwAccels)
-        {
-            cboHwAccel.Items.Add(item);
-        }
-
-        cboHwAccel.SelectedItem = cboHwAccel.Items.Contains(selection) ? selection : cboHwAccel.Items[0];
-    }
-
-    private static async Task<List<string>> DetectHwAccelsAsync(string ffmpegExe)
-    {
-        List<string> result = new();
-        HashSet<string> knownUseful = new(StringComparer.OrdinalIgnoreCase)
-            { "d3d11va", "dxva2", "cuda", "qsv", "opencl", "vulkan" };
-
+        _isLoadingConfig = true;
         try
         {
-            ProcessStartInfo psi = new()
-            {
-                FileName = ffmpegExe,
-                Arguments = "-hide_banner -hwaccels",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+            string? ffmpegExe = _ffmpegService.ResolveExecutable(txtFfmpegPath.Text.Trim());
+            List<string> items = new() { "None" };
 
-            using Process proc = new() { StartInfo = psi };
-            proc.Start();
-            string stdout = await proc.StandardOutput.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-
-            foreach (string line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            if (ffmpegExe is not null)
             {
-                string trimmed = line.Trim();
-                if (knownUseful.Contains(trimmed))
-                {
-                    result.Add(trimmed);
-                }
+                AppendLog("Detecting hardware acceleration backends...");
+                List<string> backends = await _ffmpegService.DetectHwAccelsAsync(ffmpegExe);
+                items.AddRange(backends);
+                AppendLog(backends.Count > 0
+                    ? $"HW Accel detected: {string.Join(", ", backends)}"
+                    : "HW Accel: no additional backends found.");
             }
-        }
-        catch
-        {
-            // Detection failure is non-fatal
-        }
-
-        return result;
-    }
-
-    private static string BuildHwAccelArgs(string? hwAccel)
-    {
-        if (string.IsNullOrEmpty(hwAccel) || hwAccel.Equals("None", StringComparison.OrdinalIgnoreCase))
-        {
-            return string.Empty;
-        }
-
-        // Intel QuickSync requires an additional output format flag for the proper decode pipeline
-        if (hwAccel.Equals("qsv", StringComparison.OrdinalIgnoreCase))
-        {
-            return "-hwaccel qsv -hwaccel_output_format qsv";
-        }
-
-        return $"-hwaccel {hwAccel}";
-    }
-
-    private string? ResolveFfmpegExecutable(string? configuredPath)
-    {
-        if (!string.IsNullOrWhiteSpace(configuredPath))
-        {
-            string expandedPath = Environment.ExpandEnvironmentVariables(configuredPath.Trim());
-            if (File.Exists(expandedPath))
+            else
             {
-                return expandedPath;
+                AppendLog("HW Accel detection skipped (ffmpeg not found).");
             }
-        }
 
-        string? pathVariable = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(pathVariable))
-        {
-            return null;
-        }
-
-        string[] entries = pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (string entry in entries)
-        {
-            string candidate = Path.Combine(entry, "ffmpeg.exe");
-            if (File.Exists(candidate))
+            _detectedHwAccels = items;
+            string selection = preferredSelection ?? "None";
+            cboHwAccel.Items.Clear();
+            foreach (string item in _detectedHwAccels)
             {
-                return candidate;
+                cboHwAccel.Items.Add(item);
             }
-        }
 
-        return null;
+            SelectHwAccel(selection);
+        }
+        finally
+        {
+            _isLoadingConfig = false;
+        }
     }
 
     private AppConfig ReadConfigFromUi()
@@ -487,6 +427,7 @@ public partial class Form1 : Form
             StartupDelaySeconds = Decimal.ToInt32(nudStartupDelay.Value),
             StaggerDelayMs = Decimal.ToInt32(nudStaggerDelay.Value),
             RetryCount = Decimal.ToInt32(nudRetryCount.Value),
+            RetryDelayMs = 1500,
             FfmpegPath = txtFfmpegPath.Text.Trim(),
             AutoStartOnLaunch = chkAutoStartOnLaunch.Checked,
             StartWithWindows = chkStartWithWindows.Checked,
@@ -506,11 +447,74 @@ public partial class Form1 : Form
         chkAutoStartOnLaunch.Checked = config.AutoStartOnLaunch;
         chkStartWithWindows.Checked = config.StartWithWindows;
         nudThreadsPerProcess.Value = NormalizeNumericValue(nudThreadsPerProcess, config.ThreadsPerProcess);
-        // HwAccel items are populated after async detection; apply only if items are already loaded
-        if (cboHwAccel.Items.Contains(config.HwAccel))
-            cboHwAccel.SelectedItem = config.HwAccel;
-        else if (cboHwAccel.Items.Count > 0)
-            cboHwAccel.SelectedIndex = 0;
+        SelectHwAccel(config.HwAccel);
+    }
+
+    private void InitializeChannelStatusCards(int channelCount)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => InitializeChannelStatusCards(channelCount));
+            return;
+        }
+
+        flpChannelStatus.SuspendLayout();
+        flpChannelStatus.Controls.Clear();
+        _channelStatusCards.Clear();
+
+        for (int channel = 1; channel <= channelCount; channel++)
+        {
+            ChannelStatusCard card = new(channel);
+            card.ApplyStatus(new ChannelStatusUpdate(channel, ChannelRunState.Idle, 0, 0, "Waiting to start", null, false, TimeSpan.Zero, DateTimeOffset.Now));
+            _channelStatusCards[channel] = card;
+            flpChannelStatus.Controls.Add(card);
+        }
+
+        flpChannelStatus.ResumeLayout();
+    }
+
+    private void UpdateChannelStatus(int channel, ChannelStatusUpdate update)
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => UpdateChannelStatus(channel, update));
+            return;
+        }
+
+        if (_channelStatusCards.TryGetValue(channel, out ChannelStatusCard? card))
+        {
+            card.ApplyStatus(update);
+        }
+    }
+
+    private void SelectHwAccel(string? desiredSelection)
+    {
+        if (cboHwAccel.Items.Count == 0)
+        {
+            return;
+        }
+
+        string selection = string.IsNullOrWhiteSpace(desiredSelection) ? "None" : desiredSelection.Trim();
+        foreach (object item in cboHwAccel.Items)
+        {
+            if (item is string text && text.Equals(selection, StringComparison.OrdinalIgnoreCase))
+            {
+                cboHwAccel.SelectedItem = text;
+                return;
+            }
+        }
+
+        cboHwAccel.SelectedIndex = 0;
+    }
+
+    private void cboHwAccel_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        if (_isLoadingConfig)
+        {
+            return;
+        }
+
+        _configStore.SaveConfig(ReadConfigFromUi());
     }
 
     private static decimal NormalizeNumericValue(NumericUpDown control, int value)
@@ -738,7 +742,7 @@ public partial class Form1 : Form
     {
         _allowClose = true;
         _runCancellation?.Cancel();
-        KillAllActiveProcesses();
+        _channelRunner.KillAllActiveProcesses();
         Close();
     }
 
@@ -809,13 +813,6 @@ public partial class Form1 : Form
     }
 
     private sealed record ChannelRunResult(ChannelRunState State, int ExitCode, string ErrorSummary, bool ConnectionEstablished, TimeSpan RunDuration);
-
-    private enum ChannelRunState
-    {
-        UnexpectedExit,
-        Canceled,
-        StartFailed
-    }
 }
 
 public sealed class AppConfig
@@ -829,6 +826,8 @@ public sealed class AppConfig
     public int StaggerDelayMs { get; set; }
 
     public int RetryCount { get; set; }
+
+    public int RetryDelayMs { get; set; }
 
     public string FfmpegPath { get; set; } = string.Empty;
 
@@ -849,6 +848,7 @@ public sealed class AppConfig
             StartupDelaySeconds = 2,
             StaggerDelayMs = 500,
             RetryCount = 2,
+            RetryDelayMs = 1500,
             FfmpegPath = string.Empty,
             AutoStartOnLaunch = false,
             StartWithWindows = false,

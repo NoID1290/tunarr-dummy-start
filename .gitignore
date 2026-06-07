@@ -33,5 +33,7 @@ Thumbs.db
 # Build output
 TunarrDummyStart/bin/
 TunarrDummyStart/obj/
+dist/
+build/
 
-dist/win-x64-single/TunarrDummyStart.exe
+
