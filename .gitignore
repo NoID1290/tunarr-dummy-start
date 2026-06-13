@@ -37,3 +37,5 @@ dist/
 build/
 
 
+.continue/prompts/new-prompt-1.md
+.continue/rules/guienhancements.md

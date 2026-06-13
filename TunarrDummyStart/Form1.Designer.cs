@@ -321,7 +321,7 @@ partial class Form1
         flpChannelStatus.Location = new Point(12, 223);
         flpChannelStatus.Name = "flpChannelStatus";
         flpChannelStatus.Padding = new Padding(3);
-        flpChannelStatus.Size = new Size(876, 76);
+        flpChannelStatus.Size = new Size(2000, 76);
         flpChannelStatus.TabIndex = 19;
         flpChannelStatus.WrapContents = false;
 
