@@ -1,0 +1,10 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.TunarrDummyStart" parent="Theme.Material3.Dark.NoActionBar">
+        <!-- Customize your theme here. -->
+        <item name="colorPrimary">@color/accent_color</item>
+        <item name="android:windowBackground">@color/bg_color</item>
+        <item name="colorPrimaryDark">@color/bg_color</item>
+        <item name="colorAccent">@color/accent_color</item>
+    </style>
+</resources>

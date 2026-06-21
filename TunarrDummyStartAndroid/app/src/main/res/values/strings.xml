@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">Tunarr Dummy Dashboard</string>
+    <string name="server_address_hint">Server Address (http://ip:port)</string>
+    <string name="connect">Connect</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="status_label">Status:</string>
+    <string name="running">Running</string>
+    <string name="stopped">Stopped</string>
+    <string name="start_server">Start Keep-Alive</string>
+    <string name="stop_server">Stop Keep-Alive</string>
+    <string name="logs_tab">Logs</string>
+    <string name="channels_tab">Channels</string>
+    <string name="config_tab">Config</string>
+    <string name="save_config">Save Config</string>
+    <string name="refresh">Refresh</string>
+</resources>

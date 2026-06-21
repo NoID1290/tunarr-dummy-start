@@ -1,0 +1,18 @@
+<resources>
+    <color name="bg_color">#0b0f19</color>
+    <color name="panel_bg">#171f30</color>
+    <color name="border_color">#2e3d59</color>
+    <color name="accent_color">#3b82f6</color>
+    <color name="text_color">#f3f4f6</color>
+    <color name="text_muted">#9ca3af</color>
+    
+    <color name="state_connected">#10b981</color>
+    <color name="state_connecting">#3b82f6</color>
+    <color name="state_retrying">#f59e0b</color>
+    <color name="state_failed">#ef4444</color>
+    <color name="state_idle">#9ca3af</color>
+    <color name="state_disabled">#4b5563</color>
+
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
