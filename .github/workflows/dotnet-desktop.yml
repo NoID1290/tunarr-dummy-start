@@ -104,6 +104,10 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x ./TunarrDummyStartAndroid/gradlew
 
+    - name: Generate self-signed Keystore
+      run: |
+        keytool -genkey -v -keystore release.keystore -alias release -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=TunarrDummy, O=NoID, C=US" -storepass password -keypass password
+
     - name: Build with Gradle
       run: |
         cd TunarrDummyStartAndroid
@@ -113,7 +117,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: TunarrDummyStart-android
-        path: TunarrDummyStartAndroid/app/build/outputs/apk/release/*-unsigned.apk
+        path: TunarrDummyStartAndroid/app/build/outputs/apk/release/*.apk
 
   release:
     needs: [build, build-android]
