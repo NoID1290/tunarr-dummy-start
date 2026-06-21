@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -20,7 +21,7 @@ namespace TunarrDummyStart
         private readonly Func<bool> _isRunnerRunning;
         private readonly Action<string> _logMessage;
 
-        private HttpListener? _listener;
+        private TcpListener? _listener;
         private CancellationTokenSource? _cts;
         private int _port;
         private bool _isRunning;
@@ -58,50 +59,23 @@ namespace TunarrDummyStart
 
             _port = port;
             _cts = new CancellationTokenSource();
-            _listener = new HttpListener();
 
-            bool bound = false;
-            // Try wildcard binding first
             try
             {
-                _listener.Prefixes.Add($"http://*:{port}/");
+                // TcpListener bound to IPAddress.Any (0.0.0.0) allows remote connections 
+                // on non-restricted ports (>1024) without requiring Administrator permissions.
+                _listener = new TcpListener(IPAddress.Any, port);
                 _listener.Start();
-                bound = true;
+                _isRunning = true;
                 _logMessage($"Web server started remotely at http://*:{port}/");
-            }
-            catch (HttpListenerException ex) when (ex.ErrorCode == 5) // Access Denied
-            {
-                _logMessage($"Access denied for wildcard prefix http://*:{port}/. Falling back to http://localhost:{port}/");
-                _listener.Close();
-                
-                _listener = new HttpListener();
-                _listener.Prefixes.Add($"http://localhost:{port}/");
-                try
-                {
-                    _listener.Start();
-                    bound = true;
-                    _logMessage($"Web server started locally at http://localhost:{port}/");
-                }
-                catch (Exception fallbackEx)
-                {
-                    _logMessage($"Failed to bind fallback local address: {fallbackEx.Message}");
-                }
+                Task.Run(() => ListenLoopAsync(_cts.Token));
             }
             catch (Exception ex)
             {
-                _logMessage($"Failed to bind wildcard address: {ex.Message}");
-            }
-
-            if (!bound)
-            {
-                _logMessage("Web server could not be started. Check port occupancy or run as administrator.");
-                _listener.Close();
+                _logMessage($"Web server could not be started: {ex.Message}");
                 _listener = null;
-                return;
+                _isRunning = false;
             }
-
-            _isRunning = true;
-            Task.Run(() => ListenLoopAsync(_cts.Token));
         }
 
         public void Stop()
@@ -116,7 +90,6 @@ namespace TunarrDummyStart
             try
             {
                 _listener?.Stop();
-                _listener?.Close();
             }
             catch { }
             _listener = null;
@@ -125,190 +98,251 @@ namespace TunarrDummyStart
 
         private async Task ListenLoopAsync(CancellationToken token)
         {
-            while (!token.IsCancellationRequested && _listener != null && _listener.IsListening)
+            while (!token.IsCancellationRequested && _listener != null)
             {
                 try
                 {
-                    var context = await _listener.GetContextAsync();
-                    _ = Task.Run(() => HandleRequestAsync(context), token);
+                    var client = await _listener.AcceptTcpClientAsync(token);
+                    _ = Task.Run(() => HandleClientAsync(client), token);
                 }
-                catch (HttpListenerException)
+                catch (OperationCanceledException)
                 {
-                    // Occurs when listener is stopped
                     break;
                 }
                 catch (Exception ex)
                 {
-                    _logMessage($"Web server listener loop exception: {ex.Message}");
+                    if (token.IsCancellationRequested) break;
+                    _logMessage($"Web server loop exception: {ex.Message}");
                 }
             }
         }
 
-        private async Task HandleRequestAsync(HttpListenerContext context)
+        private async Task HandleClientAsync(TcpClient client)
         {
-            var request = context.Request;
-            var response = context.Response;
-
-            // Enable CORS for local troubleshooting
-            response.Headers.Add("Access-Control-Allow-Origin", "*");
-            response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-            response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
-
-            if (request.HttpMethod == "OPTIONS")
+            using (client)
+            using (var stream = client.GetStream())
             {
-                response.StatusCode = (int)HttpStatusCode.OK;
-                response.Close();
-                return;
-            }
-
-            try
-            {
-                string rawUrl = request.Url?.AbsolutePath ?? "/";
-                
-                if (request.HttpMethod == "GET" && rawUrl == "/")
-                {
-                    await ServeDashboardAsync(response);
-                    return;
-                }
-
-                if (request.HttpMethod == "GET" && rawUrl == "/api/status")
-                {
-                    await ServeApiStatusAsync(response);
-                    return;
-                }
-
-                if (request.HttpMethod == "GET" && rawUrl == "/api/log")
-                {
-                    await ServeApiLogAsync(response);
-                    return;
-                }
-
-                if (request.HttpMethod == "GET" && rawUrl == "/api/config")
-                {
-                    await ServeApiGetConfigAsync(response);
-                    return;
-                }
-
-                if (request.HttpMethod == "POST" && rawUrl == "/api/config")
-                {
-                    await HandleApiSetConfigAsync(request, response);
-                    return;
-                }
-
-                if (request.HttpMethod == "POST" && rawUrl == "/api/start")
-                {
-                    _startRunner();
-                    await ServeJsonResponseAsync(response, new { success = true });
-                    return;
-                }
-
-                if (request.HttpMethod == "POST" && rawUrl == "/api/stop")
-                {
-                    _stopRunner();
-                    await ServeJsonResponseAsync(response, new { success = true });
-                    return;
-                }
-
-                // Not found
-                response.StatusCode = (int)HttpStatusCode.NotFound;
-                await ServeTextResponseAsync(response, "404 Not Found");
-            }
-            catch (Exception ex)
-            {
-                response.StatusCode = (int)HttpStatusCode.InternalServerError;
                 try
                 {
-                    await ServeTextResponseAsync(response, $"Internal Server Error: {ex.Message}");
-                }
-                catch { }
-            }
-        }
+                    // Set read and write timeouts to prevent hanging sockets
+                    stream.ReadTimeout = 5000;
+                    stream.WriteTimeout = 5000;
 
-        private async Task ServeDashboardAsync(HttpListenerResponse response)
-        {
-            response.ContentType = "text/html; charset=utf-8";
-            byte[] buffer = Encoding.UTF8.GetBytes(DashboardHtml);
-            response.ContentLength64 = buffer.Length;
-            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-            response.Close();
-        }
-
-        private async Task ServeApiStatusAsync(HttpListenerResponse response)
-        {
-            var status = new
-            {
-                isRunning = _isRunnerRunning(),
-                channels = _getChannelStatuses()
-            };
-            await ServeJsonResponseAsync(response, status);
-        }
-
-        private async Task ServeApiLogAsync(HttpListenerResponse response)
-        {
-            var logs = _getLogs();
-            string fullLog = string.Join("\n", logs);
-            await ServeTextResponseAsync(response, fullLog);
-        }
-
-        private async Task ServeApiGetConfigAsync(HttpListenerResponse response)
-        {
-            await ServeJsonResponseAsync(response, _getConfig());
-        }
-
-        private async Task HandleApiSetConfigAsync(HttpListenerRequest request, HttpListenerResponse response)
-        {
-            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
-            {
-                string body = await reader.ReadToEndAsync();
-                try
-                {
-                    var newConfig = JsonSerializer.Deserialize<AppConfig>(body, new JsonSerializerOptions
+                    // Read request header
+                    var headerBuffer = new List<byte>();
+                    byte[] temp = new byte[1];
+                    while (true)
                     {
-                        PropertyNameCaseInsensitive = true
-                    });
+                        int bytesRead = await stream.ReadAsync(temp, 0, 1);
+                        if (bytesRead <= 0) break;
+                        headerBuffer.Add(temp[0]);
 
-                    if (newConfig != null)
-                    {
-                        // Validate config
-                        if (string.IsNullOrWhiteSpace(newConfig.BaseUrl) || !Uri.TryCreate(newConfig.BaseUrl, UriKind.Absolute, out _))
+                        // Check for ending sequence \r\n\r\n
+                        if (headerBuffer.Count >= 4 &&
+                            headerBuffer[headerBuffer.Count - 4] == 13 && // \r
+                            headerBuffer[headerBuffer.Count - 3] == 10 && // \n
+                            headerBuffer[headerBuffer.Count - 2] == 13 && // \r
+                            headerBuffer[headerBuffer.Count - 1] == 10)   // \n
                         {
-                            await ServeJsonResponseAsync(response, new { success = false, error = "Invalid Base URL" });
-                            return;
+                            break;
                         }
 
-                        _saveConfig(newConfig);
-                        await ServeJsonResponseAsync(response, new { success = true });
+                        if (headerBuffer.Count > 8192) // Limit header size
+                        {
+                            await SendErrorResponseAsync(stream, 400, "Bad Request (Header too large)");
+                            return;
+                        }
                     }
-                    else
+
+                    if (headerBuffer.Count == 0) return;
+
+                    string headerText = Encoding.UTF8.GetString(headerBuffer.ToArray());
+                    string[] lines = headerText.Split(new[] { "\r\n" }, StringSplitOptions.None);
+                    if (lines.Length == 0) return;
+
+                    string requestLine = lines[0];
+                    string[] requestParts = requestLine.Split(' ');
+                    if (requestParts.Length < 2)
                     {
-                        await ServeJsonResponseAsync(response, new { success = false, error = "Invalid configuration data" });
+                        await SendErrorResponseAsync(stream, 400, "Bad Request");
+                        return;
                     }
+
+                    string method = requestParts[0].ToUpper();
+                    string rawUrl = requestParts[1];
+
+                    // Strip query strings
+                    int queryIdx = rawUrl.IndexOf('?');
+                    string path = queryIdx >= 0 ? rawUrl.Substring(0, queryIdx) : rawUrl;
+
+                    // Extract Content-Length
+                    int contentLength = 0;
+                    foreach (string line in lines)
+                    {
+                        if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            int.TryParse(line.Substring(15).Trim(), out contentLength);
+                        }
+                    }
+
+                    // Read body if content is posted
+                    string body = string.Empty;
+                    if (contentLength > 0 && contentLength < 1024 * 1024) // 1MB maximum
+                    {
+                        byte[] bodyBytes = new byte[contentLength];
+                        int totalRead = 0;
+                        while (totalRead < contentLength)
+                        {
+                            int read = await stream.ReadAsync(bodyBytes, totalRead, contentLength - totalRead);
+                            if (read <= 0) break;
+                            totalRead += read;
+                        }
+                        body = Encoding.UTF8.GetString(bodyBytes);
+                    }
+
+                    // Route mapping
+                    if (method == "OPTIONS")
+                    {
+                        await SendCorsOkAsync(stream);
+                        return;
+                    }
+
+                    if (method == "GET" && path == "/")
+                    {
+                        await SendResponseAsync(stream, 200, "text/html; charset=utf-8", Encoding.UTF8.GetBytes(DashboardHtml));
+                        return;
+                    }
+
+                    if (method == "GET" && path == "/api/status")
+                    {
+                        var status = new
+                        {
+                            isRunning = _isRunnerRunning(),
+                            channels = _getChannelStatuses()
+                        };
+                        string json = JsonSerializer.Serialize(status, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "GET" && path == "/api/log")
+                    {
+                        string logText = string.Join("\n", _getLogs());
+                        await SendResponseAsync(stream, 200, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(logText));
+                        return;
+                    }
+
+                    if (method == "GET" && path == "/api/config")
+                    {
+                        string json = JsonSerializer.Serialize(_getConfig(), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/config")
+                    {
+                        try
+                        {
+                            var newConfig = JsonSerializer.Deserialize<AppConfig>(body, new JsonSerializerOptions
+                            {
+                                PropertyNameCaseInsensitive = true
+                            });
+
+                            if (newConfig != null)
+                            {
+                                if (string.IsNullOrWhiteSpace(newConfig.BaseUrl) || !Uri.TryCreate(newConfig.BaseUrl, UriKind.Absolute, out _))
+                                {
+                                    string errorJson = JsonSerializer.Serialize(new { success = false, error = "Invalid Base URL" });
+                                    await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(errorJson));
+                                    return;
+                                }
+
+                                _saveConfig(newConfig);
+                                string okJson = JsonSerializer.Serialize(new { success = true });
+                                await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(okJson));
+                            }
+                            else
+                            {
+                                string errorJson = JsonSerializer.Serialize(new { success = false, error = "Invalid configuration data" });
+                                await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(errorJson));
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            string errorJson = JsonSerializer.Serialize(new { success = false, error = ex.Message });
+                            await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(errorJson));
+                        }
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/start")
+                    {
+                        _startRunner();
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/stop")
+                    {
+                        _stopRunner();
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    await SendErrorResponseAsync(stream, 404, "Not Found");
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    await ServeJsonResponseAsync(response, new { success = false, error = ex.Message });
+                    try
+                    {
+                        await SendErrorResponseAsync(stream, 500, "Internal Server Error");
+                    }
+                    catch { }
                 }
             }
         }
 
-        private async Task ServeJsonResponseAsync(HttpListenerResponse response, object data)
+        private async Task SendResponseAsync(NetworkStream stream, int statusCode, string contentType, byte[] bodyBytes)
         {
-            response.ContentType = "application/json; charset=utf-8";
-            string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-            byte[] buffer = Encoding.UTF8.GetBytes(json);
-            response.ContentLength64 = buffer.Length;
-            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-            response.Close();
+            var headerSb = new StringBuilder();
+            headerSb.Append($"HTTP/1.1 {statusCode} {GetStatusCodePhrase(statusCode)}\r\n");
+            headerSb.Append($"Content-Type: {contentType}\r\n");
+            headerSb.Append($"Content-Length: {bodyBytes.Length}\r\n");
+            headerSb.Append("Access-Control-Allow-Origin: *\r\n");
+            headerSb.Append("Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n");
+            headerSb.Append("Access-Control-Allow-Headers: Content-Type\r\n");
+            headerSb.Append("Connection: close\r\n\r\n");
+
+            byte[] headerBytes = Encoding.UTF8.GetBytes(headerSb.ToString());
+            await stream.WriteAsync(headerBytes, 0, headerBytes.Length);
+            if (bodyBytes.Length > 0)
+            {
+                await stream.WriteAsync(bodyBytes, 0, bodyBytes.Length);
+            }
+            await stream.FlushAsync();
         }
 
-        private async Task ServeTextResponseAsync(HttpListenerResponse response, string text)
+        private async Task SendErrorResponseAsync(NetworkStream stream, int statusCode, string message)
         {
-            response.ContentType = "text/plain; charset=utf-8";
-            byte[] buffer = Encoding.UTF8.GetBytes(text);
-            response.ContentLength64 = buffer.Length;
-            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-            response.Close();
+            byte[] bodyBytes = Encoding.UTF8.GetBytes(message);
+            await SendResponseAsync(stream, statusCode, "text/plain; charset=utf-8", bodyBytes);
         }
+
+        private async Task SendCorsOkAsync(NetworkStream stream)
+        {
+            await SendResponseAsync(stream, 200, "text/plain", Array.Empty<byte>());
+        }
+
+        private static string GetStatusCodePhrase(int code) => code switch
+        {
+            200 => "OK",
+            400 => "Bad Request",
+            404 => "Not Found",
+            500 => "Internal Server Error",
+            _ => "Unknown"
+        };
 
         public void Dispose()
         {
