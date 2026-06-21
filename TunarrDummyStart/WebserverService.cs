@@ -1,0 +1,1240 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TunarrDummyStart
+{
+    public sealed class WebserverService : IDisposable
+    {
+        private readonly Func<AppConfig> _getConfig;
+        private readonly Action<AppConfig> _saveConfig;
+        private readonly Func<List<ChannelStatusUpdate>> _getChannelStatuses;
+        private readonly Func<List<string>> _getLogs;
+        private readonly Action _startRunner;
+        private readonly Action _stopRunner;
+        private readonly Func<bool> _isRunnerRunning;
+        private readonly Action<string> _logMessage;
+
+        private HttpListener? _listener;
+        private CancellationTokenSource? _cts;
+        private int _port;
+        private bool _isRunning;
+
+        public bool IsRunning => _isRunning;
+        public int Port => _port;
+
+        public WebserverService(
+            Func<AppConfig> getConfig,
+            Action<AppConfig> saveConfig,
+            Func<List<ChannelStatusUpdate>> getChannelStatuses,
+            Func<List<string>> getLogs,
+            Action startRunner,
+            Action stopRunner,
+            Func<bool> isRunnerRunning,
+            Action<string> logMessage)
+        {
+            _getConfig = getConfig;
+            _saveConfig = saveConfig;
+            _getChannelStatuses = getChannelStatuses;
+            _getLogs = getLogs;
+            _startRunner = startRunner;
+            _stopRunner = stopRunner;
+            _isRunnerRunning = isRunnerRunning;
+            _logMessage = logMessage;
+        }
+
+        public void Start(int port)
+        {
+            if (_isRunning)
+            {
+                if (_port == port) return;
+                Stop();
+            }
+
+            _port = port;
+            _cts = new CancellationTokenSource();
+            _listener = new HttpListener();
+
+            bool bound = false;
+            // Try wildcard binding first
+            try
+            {
+                _listener.Prefixes.Add($"http://*:{port}/");
+                _listener.Start();
+                bound = true;
+                _logMessage($"Web server started remotely at http://*:{port}/");
+            }
+            catch (HttpListenerException ex) when (ex.ErrorCode == 5) // Access Denied
+            {
+                _logMessage($"Access denied for wildcard prefix http://*:{port}/. Falling back to http://localhost:{port}/");
+                _listener.Close();
+                
+                _listener = new HttpListener();
+                _listener.Prefixes.Add($"http://localhost:{port}/");
+                try
+                {
+                    _listener.Start();
+                    bound = true;
+                    _logMessage($"Web server started locally at http://localhost:{port}/");
+                }
+                catch (Exception fallbackEx)
+                {
+                    _logMessage($"Failed to bind fallback local address: {fallbackEx.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logMessage($"Failed to bind wildcard address: {ex.Message}");
+            }
+
+            if (!bound)
+            {
+                _logMessage("Web server could not be started. Check port occupancy or run as administrator.");
+                _listener.Close();
+                _listener = null;
+                return;
+            }
+
+            _isRunning = true;
+            Task.Run(() => ListenLoopAsync(_cts.Token));
+        }
+
+        public void Stop()
+        {
+            if (!_isRunning) return;
+
+            _isRunning = false;
+            _cts?.Cancel();
+            _cts?.Dispose();
+            _cts = null;
+
+            try
+            {
+                _listener?.Stop();
+                _listener?.Close();
+            }
+            catch { }
+            _listener = null;
+            _logMessage("Web server stopped.");
+        }
+
+        private async Task ListenLoopAsync(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested && _listener != null && _listener.IsListening)
+            {
+                try
+                {
+                    var context = await _listener.GetContextAsync();
+                    _ = Task.Run(() => HandleRequestAsync(context), token);
+                }
+                catch (HttpListenerException)
+                {
+                    // Occurs when listener is stopped
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logMessage($"Web server listener loop exception: {ex.Message}");
+                }
+            }
+        }
+
+        private async Task HandleRequestAsync(HttpListenerContext context)
+        {
+            var request = context.Request;
+            var response = context.Response;
+
+            // Enable CORS for local troubleshooting
+            response.Headers.Add("Access-Control-Allow-Origin", "*");
+            response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+            response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+
+            if (request.HttpMethod == "OPTIONS")
+            {
+                response.StatusCode = (int)HttpStatusCode.OK;
+                response.Close();
+                return;
+            }
+
+            try
+            {
+                string rawUrl = request.Url?.AbsolutePath ?? "/";
+                
+                if (request.HttpMethod == "GET" && rawUrl == "/")
+                {
+                    await ServeDashboardAsync(response);
+                    return;
+                }
+
+                if (request.HttpMethod == "GET" && rawUrl == "/api/status")
+                {
+                    await ServeApiStatusAsync(response);
+                    return;
+                }
+
+                if (request.HttpMethod == "GET" && rawUrl == "/api/log")
+                {
+                    await ServeApiLogAsync(response);
+                    return;
+                }
+
+                if (request.HttpMethod == "GET" && rawUrl == "/api/config")
+                {
+                    await ServeApiGetConfigAsync(response);
+                    return;
+                }
+
+                if (request.HttpMethod == "POST" && rawUrl == "/api/config")
+                {
+                    await HandleApiSetConfigAsync(request, response);
+                    return;
+                }
+
+                if (request.HttpMethod == "POST" && rawUrl == "/api/start")
+                {
+                    _startRunner();
+                    await ServeJsonResponseAsync(response, new { success = true });
+                    return;
+                }
+
+                if (request.HttpMethod == "POST" && rawUrl == "/api/stop")
+                {
+                    _stopRunner();
+                    await ServeJsonResponseAsync(response, new { success = true });
+                    return;
+                }
+
+                // Not found
+                response.StatusCode = (int)HttpStatusCode.NotFound;
+                await ServeTextResponseAsync(response, "404 Not Found");
+            }
+            catch (Exception ex)
+            {
+                response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                try
+                {
+                    await ServeTextResponseAsync(response, $"Internal Server Error: {ex.Message}");
+                }
+                catch { }
+            }
+        }
+
+        private async Task ServeDashboardAsync(HttpListenerResponse response)
+        {
+            response.ContentType = "text/html; charset=utf-8";
+            byte[] buffer = Encoding.UTF8.GetBytes(DashboardHtml);
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+            response.Close();
+        }
+
+        private async Task ServeApiStatusAsync(HttpListenerResponse response)
+        {
+            var status = new
+            {
+                isRunning = _isRunnerRunning(),
+                channels = _getChannelStatuses()
+            };
+            await ServeJsonResponseAsync(response, status);
+        }
+
+        private async Task ServeApiLogAsync(HttpListenerResponse response)
+        {
+            var logs = _getLogs();
+            string fullLog = string.Join("\n", logs);
+            await ServeTextResponseAsync(response, fullLog);
+        }
+
+        private async Task ServeApiGetConfigAsync(HttpListenerResponse response)
+        {
+            await ServeJsonResponseAsync(response, _getConfig());
+        }
+
+        private async Task HandleApiSetConfigAsync(HttpListenerRequest request, HttpListenerResponse response)
+        {
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            {
+                string body = await reader.ReadToEndAsync();
+                try
+                {
+                    var newConfig = JsonSerializer.Deserialize<AppConfig>(body, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+                    if (newConfig != null)
+                    {
+                        // Validate config
+                        if (string.IsNullOrWhiteSpace(newConfig.BaseUrl) || !Uri.TryCreate(newConfig.BaseUrl, UriKind.Absolute, out _))
+                        {
+                            await ServeJsonResponseAsync(response, new { success = false, error = "Invalid Base URL" });
+                            return;
+                        }
+
+                        _saveConfig(newConfig);
+                        await ServeJsonResponseAsync(response, new { success = true });
+                    }
+                    else
+                    {
+                        await ServeJsonResponseAsync(response, new { success = false, error = "Invalid configuration data" });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await ServeJsonResponseAsync(response, new { success = false, error = ex.Message });
+                }
+            }
+        }
+
+        private async Task ServeJsonResponseAsync(HttpListenerResponse response, object data)
+        {
+            response.ContentType = "application/json; charset=utf-8";
+            string json = JsonSerializer.Serialize(data, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            byte[] buffer = Encoding.UTF8.GetBytes(json);
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+            response.Close();
+        }
+
+        private async Task ServeTextResponseAsync(HttpListenerResponse response, string text)
+        {
+            response.ContentType = "text/plain; charset=utf-8";
+            byte[] buffer = Encoding.UTF8.GetBytes(text);
+            response.ContentLength64 = buffer.Length;
+            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+            response.Close();
+        }
+
+        public void Dispose()
+        {
+            Stop();
+        }
+
+        private const string DashboardHtml = $$"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tunarr Dummy Starter — Control Panel</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(17, 24, 39, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-color: #3b82f6;
+            --accent-glow: rgba(59, 130, 246, 0.5);
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+            
+            --state-connected-bg: rgba(16, 185, 129, 0.15);
+            --state-connected-accent: #10b981;
+            --state-connecting-bg: rgba(59, 130, 246, 0.15);
+            --state-connecting-accent: #3b82f6;
+            --state-retrying-bg: rgba(245, 158, 11, 0.15);
+            --state-retrying-accent: #f59e0b;
+            --state-failed-bg: rgba(239, 68, 68, 0.15);
+            --state-failed-accent: #ef4444;
+            --state-idle-bg: rgba(107, 114, 128, 0.15);
+            --state-idle-accent: #9ca3af;
+            --state-disabled-bg: rgba(75, 75, 75, 0.1);
+            --state-disabled-accent: #5e6675;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: radial-gradient(circle at top right, #1e293b, var(--bg-color));
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+            padding-bottom: 2rem;
+        }
+
+        header {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.25rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: var(--state-idle-accent);
+            box-shadow: 0 0 8px var(--state-idle-accent);
+            transition: all 0.5s ease;
+        }
+
+        .logo-indicator.active {
+            background-color: var(--state-connected-accent);
+            box-shadow: 0 0 12px var(--state-connected-accent);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .logo-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #60a5fa, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            margin: 2rem auto;
+            padding: 0 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+            flex-grow: 1;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+        }
+
+        @media (min-width: 1024px) {
+            .dashboard-grid {
+                grid-template-columns: 2fr 1fr;
+            }
+        }
+
+        .card {
+            background: var(--panel-bg);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .card:hover {
+            border-color: rgba(255,255,255,0.15);
+            box-shadow: 0 15px 35px -5px rgba(0,0,0,0.6);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.75rem;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        /* Controls */
+        .controls-row {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border-radius: 10px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+
+        .btn-primary {
+            background: #2563eb;
+            color: white;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+        }
+
+        .btn-primary:hover {
+            background: #1d4ed8;
+            transform: translateY(-1px);
+        }
+
+        .btn-danger {
+            background: #dc2626;
+            color: white;
+            box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4);
+        }
+
+        .btn-danger:hover {
+            background: #b91c1c;
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.05);
+            color: var(--text-color);
+            border-color: var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        /* Channel Status Grid */
+        .channels-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 1rem;
+        }
+
+        .channel-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.25s ease;
+        }
+
+        .channel-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255,255,255,0.1);
+        }
+
+        .channel-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background-color: var(--accent-state, var(--state-idle-accent));
+        }
+
+        .channel-card.state-connected {
+            --accent-state: var(--state-connected-accent);
+            --bg-state: var(--state-connected-bg);
+            background: rgba(16, 185, 129, 0.03);
+        }
+
+        .channel-card.state-connecting {
+            --accent-state: var(--state-connecting-accent);
+            --bg-state: var(--state-connecting-bg);
+            background: rgba(59, 130, 246, 0.03);
+        }
+
+        .channel-card.state-retrying {
+            --accent-state: var(--state-retrying-accent);
+            --bg-state: var(--state-retrying-bg);
+            background: rgba(245, 158, 11, 0.03);
+        }
+
+        .channel-card.state-failed {
+            --accent-state: var(--state-failed-accent);
+            --bg-state: var(--state-failed-bg);
+            background: rgba(239, 68, 68, 0.03);
+        }
+
+        .channel-card.state-disabled {
+            --accent-state: var(--state-disabled-accent);
+            --bg-state: var(--state-disabled-bg);
+            background: rgba(75, 75, 75, 0.02);
+            opacity: 0.6;
+        }
+
+        .channel-id {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .channel-state-badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.15rem 0.5rem;
+            border-radius: 20px;
+            background: var(--bg-state, var(--state-idle-bg));
+            color: var(--accent-state, var(--state-idle-accent));
+            align-self: flex-start;
+        }
+
+        .channel-detail {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-top: 0.25rem;
+        }
+
+        .channel-duration {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: auto;
+        }
+
+        /* Form styling */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-bottom: 1.25rem;
+        }
+
+        label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        input[type="text"], input[type="number"], select {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.6rem 0.8rem;
+            color: var(--text-color);
+            font-family: inherit;
+            font-size: 0.9rem;
+            transition: border-color 0.2s ease;
+            width: 100%;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        /* Log console */
+        .console-container {
+            position: relative;
+        }
+
+        .console {
+            background: #030712;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.85rem;
+            padding: 1rem;
+            color: #34d399;
+            height: 320px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            box-shadow: inset 0 2px 8px rgba(0,0,0,0.8);
+            line-height: 1.4;
+        }
+
+        .channel-editor-btn {
+            font-size: 0.75rem;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border-color);
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--text-color);
+            transition: all 0.2s;
+        }
+
+        .channel-editor-btn:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        /* Modal styling */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal.open {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #111827;
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            width: 95%;
+            max-width: 700px;
+            padding: 1.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+
+        .channels-table-container {
+            max-height: 350px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: rgba(0,0,0,0.2);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+            text-align: left;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: rgba(255,255,255,0.03);
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+        }
+
+        .checkbox-container input {
+            cursor: pointer;
+        }
+
+        .grid-inline-fields {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo-section">
+            <div id="statusIndicator" class="logo-indicator"></div>
+            <div class="logo-title">Tunarr Dummy Starter</div>
+        </div>
+        <div id="connectionStatus" style="font-size:0.85rem; color:var(--text-muted);">
+            Connecting...
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Control buttons card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Runner Control</div>
+                <button id="btnToggleChannels" class="channel-editor-btn" onclick="openChannelEditor()">Configure Channels</button>
+            </div>
+            <div class="controls-row">
+                <button id="btnStart" class="btn btn-primary" onclick="startRunner()">Start Keep-Alive</button>
+                <button id="btnStop" class="btn btn-danger" onclick="stopRunner()">Stop Keep-Alive</button>
+            </div>
+        </div>
+
+        <div class="dashboard-grid">
+            <!-- Channel Status Section -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Channels</div>
+                    <span id="activeCount" style="font-size:0.85rem; color:var(--text-muted);">0 / 0 Running</span>
+                </div>
+                <div id="channelsGrid" class="channels-container">
+                    <!-- Loaded dynamically -->
+                </div>
+            </div>
+
+            <!-- Configuration Section -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">Settings</div>
+                </div>
+                <form id="configForm" onsubmit="saveConfig(event)">
+                    <div class="form-group">
+                        <label for="txtBaseUrl">Tunarr Base Channels URL</label>
+                        <input type="text" id="txtBaseUrl" required>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="nudChannelCount">Channel Count</label>
+                            <input type="number" id="nudChannelCount" min="1" max="200" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="nudStartupDelay">Startup Delay (s)</label>
+                            <input type="number" id="nudStartupDelay" min="0" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="nudStaggerDelay">Stagger Delay (ms)</label>
+                            <input type="number" id="nudStaggerDelay" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="nudRetryCount">Retry Count</label>
+                            <input type="number" id="nudRetryCount" min="0" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="cboHwAccel">Hardware Acceleration</label>
+                            <select id="cboHwAccel">
+                                <option value="None">None</option>
+                                <option value="d3d11va">d3d11va</option>
+                                <option value="dxva2">dxva2</option>
+                                <option value="cuda">cuda</option>
+                                <option value="qsv">qsv</option>
+                                <option value="opencl">opencl</option>
+                                <option value="vulkan">vulkan</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="nudThreads">Threads/Proc (0=auto)</label>
+                            <input type="number" id="nudThreads" min="0" max="32" required>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="chkWebserver">Web Server Enabled</label>
+                            <select id="chkWebserver">
+                                <option value="true">Yes</option>
+                                <option value="false">No</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="nudWebPort">Web Server Port</label>
+                            <input type="number" id="nudWebPort" min="1" max="65535" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="txtFfmpegPath">FFmpeg Path (Optional)</label>
+                        <input type="text" id="txtFfmpegPath">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">Save Settings</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Log Section -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Live Log Console</div>
+                <button class="channel-editor-btn" onclick="clearConsole()">Clear Screen</button>
+            </div>
+            <div class="console-container">
+                <div id="logConsole" class="console">Loading logs...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Channel Config Editor -->
+    <div id="channelModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="font-weight:600;">Configure Channels</h3>
+                <button class="channel-editor-btn" onclick="closeChannelEditor()">Close</button>
+            </div>
+            <p style="font-size:0.8rem; color:var(--text-muted)">Override URLs and retries or enable/disable specific channels.</p>
+            
+            <div class="channels-table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 80px">ID</th>
+                            <th style="width: 80px">Enabled</th>
+                            <th>Custom URL (Optional)</th>
+                            <th style="width: 120px">Retry Override</th>
+                        </tr>
+                    </thead>
+                    <tbody id="channelsTableBody">
+                        <!-- Loaded dynamically -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeChannelEditor()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveChannelsEditor()">Apply Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentChannels = [];
+        let globalConfig = null;
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                if (!res.ok) throw new Error('API error');
+                const data = await res.json();
+                
+                // Connection Indicator
+                document.getElementById('connectionStatus').innerText = 'Connected';
+                document.getElementById('connectionStatus').style.color = '#10b981';
+
+                // Runner Indicator & Buttons
+                const indicator = document.getElementById('statusIndicator');
+                if (data.isRunning) {
+                    indicator.classList.add('active');
+                    document.getElementById('btnStart').disabled = true;
+                    document.getElementById('btnStop').disabled = false;
+                } else {
+                    indicator.classList.remove('active');
+                    document.getElementById('btnStart').disabled = false;
+                    document.getElementById('btnStop').disabled = true;
+                }
+
+                // Channels grid
+                const grid = document.getElementById('channelsGrid');
+                grid.innerHTML = '';
+
+                let activeCount = 0;
+                let enabledCount = 0;
+
+                // Sort channel statuses
+                const sortedChannels = Object.values(data.channels).sort((a, b) => a.channel - b.channel);
+                
+                sortedChannels.forEach(c => {
+                    enabledCount++;
+                    let stateClass = 'state-idle';
+                    let stateName = 'Idle';
+
+                    switch (c.state) {
+                        case 1: // Connecting
+                            stateClass = 'state-connecting';
+                            stateName = 'Connecting';
+                            break;
+                        case 2: // Connected
+                            stateClass = 'state-connected';
+                            stateName = 'Connected';
+                            activeCount++;
+                            break;
+                        case 3: // Retrying
+                            stateClass = 'state-retrying';
+                            stateName = 'Retrying';
+                            break;
+                        case 4: // StartFailed
+                        case 5: // UnexpectedExit
+                            stateClass = 'state-failed';
+                            stateName = c.state === 4 ? 'Start Failed' : 'Disconnected';
+                            break;
+                        case 6: // Canceled
+                            stateClass = 'state-idle';
+                            stateName = 'Stopped';
+                            break;
+                        case 7: // Stopped
+                            stateClass = 'state-failed';
+                            stateName = 'Max Retries';
+                            break;
+                        case 8: // Disabled
+                            stateClass = 'state-disabled';
+                            stateName = 'Disabled';
+                            enabledCount--; // Don't count disabled
+                            break;
+                    }
+
+                    const card = document.createElement('div');
+                    card.className = `channel-card ${stateClass}`;
+                    
+                    const durationText = c.runDurationSeconds > 0 
+                        ? `${c.runDurationSeconds.toFixed(1)}s` 
+                        : '';
+
+                    card.innerHTML = `
+                        <div class="channel-id">
+                            <span>Ch ${c.channel}</span>
+                            <span class="channel-state-badge">${stateName}</span>
+                        </div>
+                        <div class="channel-detail" title="${c.message || ''}">${c.message || 'Waiting...'}</div>
+                        <div class="channel-duration">${durationText}</div>
+                    `;
+                    grid.appendChild(card);
+                });
+
+                document.getElementById('activeCount').innerText = `${activeCount} / ${enabledCount} Active`;
+
+            } catch (err) {
+                document.getElementById('connectionStatus').innerText = 'Offline';
+                document.getElementById('connectionStatus').style.color = '#ef4444';
+                document.getElementById('statusIndicator').classList.remove('active');
+            }
+        }
+
+        async function fetchLogs() {
+            try {
+                const res = await fetch('/api/log');
+                if (!res.ok) throw new Error('API error');
+                const text = await res.text();
+                const consoleDiv = document.getElementById('logConsole');
+                
+                // Smart auto-scroll: if user is scrolled up, don't force scroll
+                const shouldScroll = consoleDiv.scrollHeight - consoleDiv.clientHeight <= consoleDiv.scrollTop + 30;
+                consoleDiv.innerText = text || "No logs yet.";
+                if (shouldScroll) {
+                    consoleDiv.scrollTop = consoleDiv.scrollHeight;
+                }
+            } catch (err) {
+                document.getElementById('logConsole').innerText = "Failed to fetch logs.";
+            }
+        }
+
+        async function fetchConfig() {
+            try {
+                const res = await fetch('/api/config');
+                if (!res.ok) throw new Error('API error');
+                const config = await res.json();
+                globalConfig = config;
+
+                document.getElementById('txtBaseUrl').value = config.baseUrl;
+                document.getElementById('nudChannelCount').value = config.channelCount;
+                document.getElementById('nudStartupDelay').value = config.startupDelaySeconds;
+                document.getElementById('nudStaggerDelay').value = config.staggerDelayMs;
+                document.getElementById('nudRetryCount').value = config.retryCount;
+                document.getElementById('cboHwAccel').value = config.hwAccel;
+                document.getElementById('nudThreads').value = config.threadsPerProcess;
+                document.getElementById('chkWebserver').value = config.enableWebserver.toString();
+                document.getElementById('nudWebPort').value = config.webserverPort;
+                document.getElementById('txtFfmpegPath').value = config.ffmpegPath || '';
+
+                currentChannels = config.channels || [];
+            } catch (err) {
+                console.error("Failed to load config", err);
+            }
+        }
+
+        async function saveConfig(e) {
+            e.preventDefault();
+            if (!globalConfig) return;
+
+            const updatedConfig = {
+                ...globalConfig,
+                baseUrl: document.getElementById('txtBaseUrl').value.trim(),
+                channelCount: parseInt(document.getElementById('nudChannelCount').value),
+                startupDelaySeconds: parseInt(document.getElementById('nudStartupDelay').value),
+                staggerDelayMs: parseInt(document.getElementById('nudStaggerDelay').value),
+                retryCount: parseInt(document.getElementById('nudRetryCount').value),
+                hwAccel: document.getElementById('cboHwAccel').value,
+                threadsPerProcess: parseInt(document.getElementById('nudThreads').value),
+                enableWebserver: document.getElementById('chkWebserver').value === 'true',
+                webserverPort: parseInt(document.getElementById('nudWebPort').value),
+                ffmpegPath: document.getElementById('txtFfmpegPath').value.trim(),
+                channels: currentChannels
+            };
+
+            // Automatically scale channels if count changed
+            while (updatedConfig.channels.length < updatedConfig.channelCount) {
+                const nextId = updatedConfig.channels.length > 0 ? Math.max(...updatedConfig.channels.map(c => c.channelId)) + 1 : 1;
+                updatedConfig.channels.push({ channelId: nextId, url: '', enabled: true, retryCount: null });
+            }
+            if (updatedConfig.channels.length > updatedConfig.channelCount) {
+                updatedConfig.channels = updatedConfig.channels.slice(0, updatedConfig.channelCount);
+            }
+
+            try {
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updatedConfig)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('Configuration saved successfully!');
+                    fetchConfig();
+                } else {
+                    alert('Save failed: ' + data.error);
+                }
+            } catch (err) {
+                alert('Request failed: ' + err);
+            }
+        }
+
+        async function startRunner() {
+            try {
+                await fetch('/api/start', { method: 'POST' });
+                fetchStatus();
+            } catch (err) { alert('Failed to start runner: ' + err); }
+        }
+
+        async function stopRunner() {
+            try {
+                await fetch('/api/stop', { method: 'POST' });
+                fetchStatus();
+            } catch (err) { alert('Failed to stop runner: ' + err); }
+        }
+
+        function clearConsole() {
+            document.getElementById('logConsole').innerText = '';
+        }
+
+        // Channel Modal Editor
+        function openChannelEditor() {
+            const modal = document.getElementById('channelModal');
+            const tbody = document.getElementById('channelsTableBody');
+            tbody.innerHTML = '';
+
+            // Ensure currentChannels matches the spinner count in size
+            const countInputVal = parseInt(document.getElementById('nudChannelCount').value);
+            
+            // Adjust currentChannels size to match the UI count
+            let tempChannels = JSON.parse(JSON.stringify(currentChannels));
+            while (tempChannels.length < countInputVal) {
+                const nextId = tempChannels.length > 0 ? Math.max(...tempChannels.map(c => c.channelId)) + 1 : 1;
+                tempChannels.push({ channelId: nextId, url: '', enabled: true, retryCount: null });
+            }
+            if (tempChannels.length > countInputVal) {
+                tempChannels = tempChannels.slice(0, countInputVal);
+            }
+
+            tempChannels.forEach((c, idx) => {
+                const tr = document.createElement('tr');
+                const retryVal = c.retryCount !== null && c.retryCount !== undefined ? c.retryCount : '';
+                
+                tr.innerHTML = `
+                    <td style="font-weight:700">Ch ${c.channelId}</td>
+                    <td>
+                        <label class="checkbox-container">
+                            <input type="checkbox" id="chk_chan_${idx}" ${c.enabled ? 'checked' : ''}>
+                        </label>
+                    </td>
+                    <td>
+                        <input type="text" id="url_chan_${idx}" value="${c.url || ''}" placeholder="Default Url" style="padding:0.4rem; font-size:0.8rem;">
+                    </td>
+                    <td>
+                        <input type="number" id="retry_chan_${idx}" value="${retryVal}" placeholder="Global" style="padding:0.4rem; font-size:0.8rem;" min="0">
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            modal.classList.add('open');
+        }
+
+        function closeChannelEditor() {
+            document.getElementById('channelModal').classList.remove('open');
+        }
+
+        function saveChannelsEditor() {
+            const countInputVal = parseInt(document.getElementById('nudChannelCount').value);
+            const tableRows = document.getElementById('channelsTableBody').rows;
+            const updated = [];
+
+            for (let i = 0; i < tableRows.length; i++) {
+                const enabled = document.getElementById(`chk_chan_${i}`).checked;
+                const url = document.getElementById(`url_chan_${i}`).value.trim();
+                const retryStr = document.getElementById(`retry_chan_${i}`).value;
+                const retryCount = retryStr !== "" ? parseInt(retryStr) : null;
+                
+                updated.push({
+                    channelId: i + 1,
+                    url: url,
+                    enabled: enabled,
+                    retryCount: retryCount
+                });
+            }
+
+            currentChannels = updated;
+            closeChannelEditor();
+            alert('Channel configurations updated. Click "Save Settings" to write changes permanently to Registry.');
+        }
+
+        // Init
+        fetchConfig();
+        fetchStatus();
+        fetchLogs();
+
+        // Polling
+        setInterval(fetchStatus, 1000);
+        setInterval(fetchLogs, 1000);
+    </script>
+</body>
+</html>
+""";
+    }
+}

@@ -8,6 +8,10 @@ internal sealed class ChannelRunnerService
     private readonly Dictionary<int, Process> _activeProcesses = new();
     private readonly Action<string> _log;
     private readonly Action<int, ChannelStatusUpdate> _statusUpdater;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, ChannelStatusUpdate> _statuses = new();
+
+    public System.Collections.Concurrent.ConcurrentDictionary<int, ChannelStatusUpdate> Statuses => _statuses;
+
     public ChannelRunnerService(Action<string> log, Action<int, ChannelStatusUpdate> statusUpdater)
     {
         _log = log;
@@ -16,7 +20,18 @@ internal sealed class ChannelRunnerService
 
     public async Task RunKeepAliveLoopAsync(AppConfig config, string ffmpegExecutable, CancellationToken token)
     {
-        _log($"Starting keep-alive run. Channels={config.ChannelCount}, StartupDelay={config.StartupDelaySeconds}s, Stagger={config.StaggerDelayMs}ms, Retry={config.RetryCount}");
+        var enabledChannels = config.Channels.Where(c => c.Enabled).OrderBy(c => c.ChannelId).ToList();
+        _log($"Starting keep-alive run. Channels={config.Channels.Count} (Enabled={enabledChannels.Count}), StartupDelay={config.StartupDelaySeconds}s, Stagger={config.StaggerDelayMs}ms, GlobalRetry={config.RetryCount}");
+
+        _statuses.Clear();
+        foreach (var chan in config.Channels)
+        {
+            var initialState = chan.Enabled ? ChannelRunState.Idle : ChannelRunState.Disabled;
+            var initialMsg = chan.Enabled ? "Waiting to start" : "Disabled";
+            var update = new ChannelStatusUpdate(chan.ChannelId, initialState, 0, 0, initialMsg, null, false, TimeSpan.Zero, DateTimeOffset.Now);
+            _statuses[chan.ChannelId] = update;
+            _statusUpdater(chan.ChannelId, update);
+        }
 
         if (config.StartupDelaySeconds > 0)
         {
@@ -24,13 +39,14 @@ internal sealed class ChannelRunnerService
             await Task.Delay(TimeSpan.FromSeconds(config.StartupDelaySeconds), token);
         }
 
-        List<Task> workers = new(config.ChannelCount);
-        for (int channel = 1; channel <= config.ChannelCount; channel++)
+        List<Task> workers = new(enabledChannels.Count);
+        for (int i = 0; i < enabledChannels.Count; i++)
         {
             token.ThrowIfCancellationRequested();
-            workers.Add(RunChannelWorkerAsync(channel, config, ffmpegExecutable, token));
+            var chanConfig = enabledChannels[i];
+            workers.Add(RunChannelWorkerAsync(chanConfig, config, ffmpegExecutable, token));
 
-            if (channel < config.ChannelCount && config.StaggerDelayMs > 0)
+            if (i < enabledChannels.Count - 1 && config.StaggerDelayMs > 0)
             {
                 await Task.Delay(config.StaggerDelayMs, token);
             }
@@ -62,10 +78,14 @@ internal sealed class ChannelRunnerService
         }
     }
 
-    private async Task RunChannelWorkerAsync(int channel, AppConfig config, string ffmpegExecutable, CancellationToken token)
+    private async Task RunChannelWorkerAsync(ChannelConfig chanConfig, AppConfig config, string ffmpegExecutable, CancellationToken token)
     {
-        string url = FfmpegService.BuildChannelUrl(config.BaseUrl, channel);
-        int maxAttempts = config.RetryCount + 1;
+        int channel = chanConfig.ChannelId;
+        string url = !string.IsNullOrWhiteSpace(chanConfig.Url) 
+            ? chanConfig.Url.Trim() 
+            : FfmpegService.BuildChannelUrl(config.BaseUrl, channel);
+            
+        int maxAttempts = (chanConfig.RetryCount ?? config.RetryCount) + 1;
         TimeSpan retryDelay = TimeSpan.FromMilliseconds(Math.Max(0, config.RetryDelayMs));
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
@@ -157,6 +177,8 @@ internal sealed class ChannelRunnerService
         {
             TryTerminate(process);
             stopwatch.Stop();
+            // Await standard error read to avoid leaking tasks or stream readers
+            try { await stdErrTask; } catch { }
             return new ChannelRunResult(ChannelRunState.Canceled, -1, "canceled", connectionEstablished, stopwatch.Elapsed);
         }
         finally
@@ -164,7 +186,8 @@ internal sealed class ChannelRunnerService
             UnregisterActiveProcess(channel, process);
         }
 
-        string stdErr = await stdErrTask;
+        string stdErr = "";
+        try { stdErr = await stdErrTask; } catch { }
         string summarizedError = SummarizeError(stdErr, process.ExitCode);
         stopwatch.Stop();
         return new ChannelRunResult(ChannelRunState.UnexpectedExit, process.ExitCode, summarizedError, connectionEstablished, stopwatch.Elapsed);
@@ -172,7 +195,9 @@ internal sealed class ChannelRunnerService
 
     private void UpdateStatus(int channel, ChannelRunState state, int attempt, int maxAttempts, string message, int? exitCode, bool connectionEstablished, TimeSpan runDuration)
     {
-        _statusUpdater(channel, new ChannelStatusUpdate(channel, state, attempt, maxAttempts, message, exitCode, connectionEstablished, runDuration, DateTimeOffset.Now));
+        var update = new ChannelStatusUpdate(channel, state, attempt, maxAttempts, message, exitCode, connectionEstablished, runDuration, DateTimeOffset.Now);
+        _statuses[channel] = update;
+        _statusUpdater(channel, update);
     }
 
     private static void TryTerminate(Process process)

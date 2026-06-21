@@ -1,4 +1,4 @@
-﻿namespace TunarrDummyStart;
+namespace TunarrDummyStart;
 
 partial class Form1
 {
@@ -57,6 +57,10 @@ partial class Form1
         btnDetectHwAccel = new Button();
         lblThreadsPerProcess = new Label();
         nudThreadsPerProcess = new NumericUpDown();
+        chkEnableWebserver = new CheckBox();
+        lblWebserverPort = new Label();
+        nudWebserverPort = new NumericUpDown();
+        btnConfigureChannels = new Button();
         pnlSep1 = new Panel();
         pnlSep2 = new Panel();
         pnlSep3 = new Panel();
@@ -65,6 +69,7 @@ partial class Form1
         ((System.ComponentModel.ISupportInitialize)nudStaggerDelay).BeginInit();
         ((System.ComponentModel.ISupportInitialize)nudRetryCount).BeginInit();
         ((System.ComponentModel.ISupportInitialize)nudThreadsPerProcess).BeginInit();
+        ((System.ComponentModel.ISupportInitialize)nudWebserverPort).BeginInit();
         SuspendLayout();
 
         // ── Theme colours ──────────────────────────────────────────────────
@@ -234,6 +239,32 @@ partial class Form1
         nudThreadsPerProcess.Size = new Size(65, 23);
         nudThreadsPerProcess.TabIndex = 24;
 
+        chkEnableWebserver.AutoSize = true;
+        chkEnableWebserver.ForeColor = cLabel;
+        chkEnableWebserver.Location = new Point(635, 120);
+        chkEnableWebserver.Name = "chkEnableWebserver";
+        chkEnableWebserver.Size = new Size(87, 19);
+        chkEnableWebserver.TabIndex = 27;
+        chkEnableWebserver.Text = "Web Server";
+        chkEnableWebserver.UseVisualStyleBackColor = true;
+
+        lblWebserverPort.AutoSize = true;
+        lblWebserverPort.ForeColor = cLabel;
+        lblWebserverPort.Location = new Point(738, 122);
+        lblWebserverPort.Name = "lblWebserverPort";
+        lblWebserverPort.TabIndex = 28;
+        lblWebserverPort.Text = "Port:";
+
+        nudWebserverPort.BackColor = cInput;
+        nudWebserverPort.ForeColor = cText;
+        nudWebserverPort.Location = new Point(775, 118);
+        nudWebserverPort.Maximum = new decimal(new int[] { 65535, 0, 0, 0 });
+        nudWebserverPort.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
+        nudWebserverPort.Name = "nudWebserverPort";
+        nudWebserverPort.Size = new Size(60, 23);
+        nudWebserverPort.TabIndex = 29;
+        nudWebserverPort.Value = new decimal(new int[] { 1290, 0, 0, 0 });
+
         // ── Separator 1  (Y = 150) ─────────────────────────────────────────
         pnlSep1.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         pnlSep1.BackColor = cSep;
@@ -279,9 +310,21 @@ partial class Form1
         btnSaveConfig.UseVisualStyleBackColor = false;
         btnSaveConfig.Click += btnSaveConfig_Click;
 
+        btnConfigureChannels.BackColor = cBtn;
+        btnConfigureChannels.FlatStyle = FlatStyle.Flat;
+        btnConfigureChannels.FlatAppearance.BorderColor = cBtnBorder;
+        btnConfigureChannels.ForeColor = cText;
+        btnConfigureChannels.Location = new Point(320, 158);
+        btnConfigureChannels.Name = "btnConfigureChannels";
+        btnConfigureChannels.Size = new Size(130, 30);
+        btnConfigureChannels.TabIndex = 30;
+        btnConfigureChannels.Text = "Configure Channels";
+        btnConfigureChannels.UseVisualStyleBackColor = false;
+        btnConfigureChannels.Click += btnConfigureChannels_Click;
+
         chkAutoStartOnLaunch.AutoSize = true;
         chkAutoStartOnLaunch.ForeColor = cLabel;
-        chkAutoStartOnLaunch.Location = new Point(330, 164);
+        chkAutoStartOnLaunch.Location = new Point(470, 164);
         chkAutoStartOnLaunch.Name = "chkAutoStartOnLaunch";
         chkAutoStartOnLaunch.TabIndex = 16;
         chkAutoStartOnLaunch.Text = "Auto Start At Launch";
@@ -289,7 +332,7 @@ partial class Form1
 
         chkStartWithWindows.AutoSize = true;
         chkStartWithWindows.ForeColor = cLabel;
-        chkStartWithWindows.Location = new Point(490, 164);
+        chkStartWithWindows.Location = new Point(630, 164);
         chkStartWithWindows.Name = "chkStartWithWindows";
         chkStartWithWindows.TabIndex = 17;
         chkStartWithWindows.Text = "Start With Windows Login";
@@ -374,6 +417,7 @@ partial class Form1
         Controls.Add(chkStartWithWindows);
         Controls.Add(chkAutoStartOnLaunch);
         Controls.Add(btnSaveConfig);
+        Controls.Add(btnConfigureChannels);
         Controls.Add(btnStop);
         Controls.Add(btnStart);
         Controls.Add(pnlSep1);
@@ -395,6 +439,9 @@ partial class Form1
         Controls.Add(lblChannelCount);
         Controls.Add(txtBaseUrl);
         Controls.Add(lblBaseUrl);
+        Controls.Add(chkEnableWebserver);
+        Controls.Add(lblWebserverPort);
+        Controls.Add(nudWebserverPort);
         MinimumSize = new Size(860, 520);
         Name = "Form1";
         Text = "Tunarr Dummy Starter \u2014 FFmpeg Keep-Alive";
@@ -406,6 +453,7 @@ partial class Form1
         ((System.ComponentModel.ISupportInitialize)nudStaggerDelay).EndInit();
         ((System.ComponentModel.ISupportInitialize)nudRetryCount).EndInit();
         ((System.ComponentModel.ISupportInitialize)nudThreadsPerProcess).EndInit();
+        ((System.ComponentModel.ISupportInitialize)nudWebserverPort).EndInit();
         ResumeLayout(false);
         PerformLayout();
     }
@@ -440,6 +488,10 @@ partial class Form1
     private Button btnDetectHwAccel;
     private Label lblThreadsPerProcess;
     private NumericUpDown nudThreadsPerProcess;
+    private CheckBox chkEnableWebserver;
+    private Label lblWebserverPort;
+    private NumericUpDown nudWebserverPort;
+    private Button btnConfigureChannels;
     private Panel pnlSep1;
     private Panel pnlSep2;
     private Panel pnlSep3;

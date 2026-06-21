@@ -9,7 +9,8 @@ public enum ChannelRunState
     StartFailed,
     UnexpectedExit,
     Canceled,
-    Stopped
+    Stopped,
+    Disabled
 }
 
 public sealed record ChannelStatusUpdate(

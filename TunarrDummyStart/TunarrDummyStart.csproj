@@ -1,5 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
-
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
@@ -13,9 +12,9 @@
     <Platform>x64</Platform>
     <UseAppHost>true</UseAppHost>
     <RootNamespace>TunarrDummyStart</RootNamespace>
-    <ProductVersion>1.1</ProductVersion>
-    <Version>1.1</Version>
-    <FileVersion>1.1</FileVersion>
+    <ProductVersion>1.1.1</ProductVersion>
+    <Version>1.1.1</Version>
+    <FileVersion>1.1.1</FileVersion>
     <Authors>NoID Softwork</Authors>
     <Company>NoID Softwork</Company>
     <Description>A dummy start for Tunarr development.</Description>
@@ -24,12 +23,10 @@
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
-
   <PropertyGroup Condition="'$(PublishProtocol)' != '' OR '$(Publish)' == 'true'">
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>Link</TrimMode>
   </PropertyGroup>
-
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
@@ -40,11 +37,9 @@
     <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
     <PublishDir>$(MSBuildProjectDirectory)\..\dist\win-x64-single\</PublishDir>
   </PropertyGroup>
-
   <ItemGroup>
     <None Update="app.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
-
 </Project>

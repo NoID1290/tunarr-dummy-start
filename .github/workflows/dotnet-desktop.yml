@@ -7,7 +7,34 @@ on:
     branches: [ "main" ]
 
 jobs:
+  bump:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Auto-Version Bump
+      shell: pwsh
+      run: |
+        ./bump-version.ps1
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add .\TunarrDummyStart\TunarrDummyStart.csproj
+        $status = git status --porcelain
+        if ($status) {
+          git commit -m "chore: bump version [skip ci]"
+          git push
+        } else {
+          Write-Host "No version changes to commit."
+        }
+
   build:
+    needs: bump
+    if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
     strategy:
       matrix:
         configuration: [Debug, Release]
@@ -19,6 +46,10 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
+    - name: Pull latest changes (if bump occurred)
+      if: needs.bump.result == 'success'
+      run: git pull
 
     - name: Install .NET
       uses: actions/setup-dotnet@v4

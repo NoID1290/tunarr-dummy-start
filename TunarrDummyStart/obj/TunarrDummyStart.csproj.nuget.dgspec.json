@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj": {}
+    "s:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj": {}
   },
   "projects": {
-    "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj": {
-      "version": "1.1.0",
+    "s:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj": {
+      "version": "1.1.1",
       "restore": {
-        "projectUniqueName": "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
+        "projectUniqueName": "s:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
         "projectName": "TunarrDummyStart",
-        "projectPath": "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
+        "projectPath": "s:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
         "packagesPath": "C:\\Users\\90lec\\.nuget\\packages\\",
-        "outputPath": "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\obj\\",
+        "outputPath": "s:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Win32;
 
 namespace TunarrDummyStart;
@@ -33,8 +34,28 @@ public sealed class RegistryConfigStore
                 AutoStartOnLaunch = ReadBool(key, nameof(AppConfig.AutoStartOnLaunch), config.AutoStartOnLaunch),
                 StartWithWindows = ReadBool(key, nameof(AppConfig.StartWithWindows), config.StartWithWindows),
                 HwAccel = ReadString(key, nameof(AppConfig.HwAccel), config.HwAccel),
-                ThreadsPerProcess = ReadInt(key, nameof(AppConfig.ThreadsPerProcess), config.ThreadsPerProcess)
+                ThreadsPerProcess = ReadInt(key, nameof(AppConfig.ThreadsPerProcess), config.ThreadsPerProcess),
+                EnableWebserver = ReadBool(key, nameof(AppConfig.EnableWebserver), config.EnableWebserver),
+                WebserverPort = ReadInt(key, nameof(AppConfig.WebserverPort), config.WebserverPort)
             };
+
+            string channelsJson = ReadString(key, "ChannelsJson", "[]");
+            try
+            {
+                config.Channels = JsonSerializer.Deserialize<List<ChannelConfig>>(channelsJson) ?? new List<ChannelConfig>();
+            }
+            catch
+            {
+                config.Channels = new List<ChannelConfig>();
+            }
+
+            if (config.Channels.Count == 0)
+            {
+                for (int i = 1; i <= config.ChannelCount; i++)
+                {
+                    config.Channels.Add(new ChannelConfig { ChannelId = i, Url = string.Empty, Enabled = true });
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -65,6 +86,9 @@ public sealed class RegistryConfigStore
         key.SetValue(nameof(AppConfig.StartWithWindows), config.StartWithWindows ? 1 : 0, RegistryValueKind.DWord);
         key.SetValue(nameof(AppConfig.HwAccel), config.HwAccel, RegistryValueKind.String);
         key.SetValue(nameof(AppConfig.ThreadsPerProcess), config.ThreadsPerProcess, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.EnableWebserver), config.EnableWebserver ? 1 : 0, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.WebserverPort), config.WebserverPort, RegistryValueKind.DWord);
+        key.SetValue("ChannelsJson", JsonSerializer.Serialize(config.Channels), RegistryValueKind.String);
     }
 
     public void ApplyWindowsStartupSetting(bool enabled, bool writeLog, Action<string>? log = null)
