@@ -33,6 +33,42 @@ internal sealed class ChannelRunnerService
             _statusUpdater(chan.ChannelId, update);
         }
 
+        if (config.WaitForTunarr)
+        {
+            _log($"Wait for Tunarr startup is enabled. Checking connection to {config.BaseUrl}...");
+            try
+            {
+                var uri = new Uri(config.BaseUrl);
+                while (!token.IsCancellationRequested)
+                {
+                    try
+                    {
+                        using (var client = new System.Net.Sockets.TcpClient())
+                        {
+                            var connectTask = client.ConnectAsync(uri.Host, uri.Port);
+                            await Task.WhenAny(connectTask, Task.Delay(2000, token));
+                            if (client.Connected)
+                            {
+                                _log("Tunarr service is responsive and port is listening!");
+                                break;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // ignore and retry
+                    }
+                    
+                    _log("Tunarr service is not responsive yet. Retrying in 5 seconds...");
+                    await Task.Delay(5000, token);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log($"Error parsing Base URL for startup wait check: {ex.Message}");
+            }
+        }
+
         if (config.StartupDelaySeconds > 0)
         {
             _log($"Initial delay: {config.StartupDelaySeconds} second(s)");

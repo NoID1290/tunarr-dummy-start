@@ -42,6 +42,7 @@ namespace TunarrDummyStart
             _channelRunner = new ChannelRunnerService(AppendLog, UpdateChannelStatus);
             cboHwAccel.SelectedIndexChanged += cboHwAccel_SelectedIndexChanged;
             InitializeTrayIcon();
+            InitializeCustomControls();
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -195,6 +196,9 @@ namespace TunarrDummyStart
                 return;
             }
 
+            _tmrTunarrStatus.Stop();
+            _tmrTunarrStatus.Dispose();
+
             _webserver?.Stop();
             _webserver?.Dispose();
 
@@ -282,6 +286,11 @@ namespace TunarrDummyStart
             _currentConfig.ThreadsPerProcess = Decimal.ToInt32(nudThreadsPerProcess.Value);
             _currentConfig.EnableWebserver = chkEnableWebserver.Checked;
             _currentConfig.WebserverPort = Decimal.ToInt32(nudWebserverPort.Value);
+            _currentConfig.WebserverPassword = txtPassword.Text;
+            _currentConfig.WaitForTunarr = chkWaitForTunarr.Checked;
+            _currentConfig.TunarrUseService = chkTunarrUseService.Checked;
+            _currentConfig.TunarrServiceName = txtTunarrServiceName.Text.Trim();
+            _currentConfig.TunarrExePath = txtTunarrExePath.Text.Trim();
 
             return _currentConfig;
         }
@@ -300,6 +309,14 @@ namespace TunarrDummyStart
             nudThreadsPerProcess.Value = NormalizeNumericValue(nudThreadsPerProcess, config.ThreadsPerProcess);
             chkEnableWebserver.Checked = config.EnableWebserver;
             nudWebserverPort.Value = NormalizeNumericValue(nudWebserverPort, config.WebserverPort);
+            txtPassword.Text = config.WebserverPassword;
+            chkWaitForTunarr.Checked = config.WaitForTunarr;
+            chkTunarrUseService.Checked = config.TunarrUseService;
+            txtTunarrServiceName.Text = config.TunarrServiceName;
+            txtTunarrExePath.Text = config.TunarrExePath;
+            txtTunarrServiceName.Enabled = config.TunarrUseService;
+            txtTunarrExePath.Enabled = !config.TunarrUseService;
+            btnBrowseTunarr.Enabled = !config.TunarrUseService;
             SelectHwAccel(config.HwAccel);
         }
 
@@ -575,7 +592,15 @@ namespace TunarrDummyStart
                     startRunner: RemoteStart,
                     stopRunner: RemoteStop,
                     isRunnerRunning: () => _runTask != null && !_runTask.IsCompleted,
-                    logMessage: AppendLog
+                    logMessage: AppendLog,
+                    startTunarr: StartTunarr,
+                    stopTunarr: StopTunarr,
+                    restartTunarr: RestartTunarr,
+                    isTunarrRunning: IsTunarrRunning,
+                    restartPcServer: RestartPcServer,
+                    closePcServer: ClosePcServer,
+                    restartComputer: RestartComputer,
+                    shutdownComputer: ShutdownComputer
                 );
                 _webserver.Start(config.WebserverPort);
             }
@@ -621,6 +646,398 @@ namespace TunarrDummyStart
         {
             return new List<string>(_recentLogs);
         }
+
+        // ── Custom Dynamic Controls for Tunarr & PC Control ──────────────────
+        private GroupBox grpTunarrAndSecurity = null!;
+        private Label lblPassword = null!;
+        private TextBox txtPassword = null!;
+        private CheckBox chkWaitForTunarr = null!;
+        private CheckBox chkTunarrUseService = null!;
+        private Label lblTunarrServiceName = null!;
+        private TextBox txtTunarrServiceName = null!;
+        private Label lblTunarrExePath = null!;
+        private TextBox txtTunarrExePath = null!;
+        private Button btnBrowseTunarr = null!;
+        private Button btnStartTunarr = null!;
+        private Button btnRestartTunarr = null!;
+        private Button btnStopTunarr = null!;
+        private Label lblTunarrStatus = null!;
+        private Button btnRestartApp = null!;
+        private Button btnCloseApp = null!;
+        private Button btnRestartPC = null!;
+        private Button btnShutdownPC = null!;
+        private readonly System.Windows.Forms.Timer _tmrTunarrStatus = new();
+
+        private void InitializeCustomControls()
+        {
+            int shiftAmount = 140;
+
+            lblChannelStatus.Top += shiftAmount;
+            flpChannelStatus.Top += shiftAmount;
+            pnlSep3.Top += shiftAmount;
+            lblLog.Top += shiftAmount;
+            txtLog.Top += shiftAmount;
+            txtLog.Height -= shiftAmount;
+
+            this.Height += shiftAmount;
+            txtLog.Height += shiftAmount;
+
+            Color cBack      = Color.FromArgb(28, 28, 28);
+            Color cInput     = Color.FromArgb(45, 45, 45);
+            Color cText      = Color.FromArgb(220, 220, 220);
+            Color cLabel     = Color.FromArgb(185, 185, 185);
+            Color cSection   = Color.FromArgb(100, 180, 255);
+            Color cSep       = Color.FromArgb(65, 65, 65);
+            Color cBtn       = Color.FromArgb(52, 52, 52);
+            Color cBtnBorder = Color.FromArgb(80, 80, 80);
+
+            grpTunarrAndSecurity = new GroupBox
+            {
+                Text = "Security & Service Control",
+                Left = 12,
+                Top = 206,
+                Width = this.ClientSize.Width - 24,
+                Height = 130,
+                ForeColor = cSection,
+                BackColor = cBack,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            lblPassword = new Label { Text = "Webserver Password:", Left = 10, Top = 20, Width = 130, ForeColor = cLabel };
+            txtPassword = new TextBox
+            {
+                Left = 145, Top = 18, Width = 150, PasswordChar = '*',
+                BackColor = cInput, ForeColor = cText, BorderStyle = BorderStyle.FixedSingle
+            };
+
+            chkWaitForTunarr = new CheckBox { Text = "Wait for Tunarr on Startup", Left = 320, Top = 19, Width = 180, ForeColor = cLabel };
+
+            chkTunarrUseService = new CheckBox { Text = "Use Service instead of Process", Left = 10, Top = 50, Width = 200, ForeColor = cLabel };
+            chkTunarrUseService.CheckedChanged += ChkTunarrUseService_CheckedChanged;
+
+            lblTunarrServiceName = new Label { Text = "Service Name:", Left = 220, Top = 52, Width = 80, ForeColor = cLabel };
+            txtTunarrServiceName = new TextBox
+            {
+                Left = 305, Top = 50, Width = 100,
+                BackColor = cInput, ForeColor = cText, BorderStyle = BorderStyle.FixedSingle
+            };
+
+            lblTunarrExePath = new Label { Text = "Exe Path:", Left = 415, Top = 52, Width = 60, ForeColor = cLabel };
+            txtTunarrExePath = new TextBox
+            {
+                Left = 475, Top = 50, Width = 230,
+                BackColor = cInput, ForeColor = cText, BorderStyle = BorderStyle.FixedSingle,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            btnBrowseTunarr = new Button
+            {
+                Text = "Browse", Left = 715, Top = 48, Width = 60, Height = 25,
+                BackColor = cBtn, ForeColor = cText, FlatStyle = FlatStyle.Flat,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            btnBrowseTunarr.FlatAppearance.BorderColor = cBtnBorder;
+            btnBrowseTunarr.Click += BtnBrowseTunarr_Click;
+
+            btnStartTunarr = new Button
+            {
+                Text = "Start Tunarr", Left = 10, Top = 85, Width = 90, Height = 30,
+                BackColor = Color.FromArgb(0, 122, 204), ForeColor = Color.White, FlatStyle = FlatStyle.Flat
+            };
+            btnStartTunarr.Click += (s, e) => StartTunarr();
+
+            btnRestartTunarr = new Button
+            {
+                Text = "Restart Tunarr", Left = 105, Top = 85, Width = 100, Height = 30,
+                BackColor = cBtn, ForeColor = cText, FlatStyle = FlatStyle.Flat
+            };
+            btnRestartTunarr.FlatAppearance.BorderColor = cBtnBorder;
+            btnRestartTunarr.Click += (s, e) => RestartTunarr();
+
+            btnStopTunarr = new Button
+            {
+                Text = "Stop Tunarr", Left = 210, Top = 85, Width = 90, Height = 30,
+                BackColor = Color.FromArgb(180, 40, 30), ForeColor = Color.White, FlatStyle = FlatStyle.Flat
+            };
+            btnStopTunarr.Click += (s, e) => StopTunarr();
+
+            lblTunarrStatus = new Label { Text = "Status: Unknown", Left = 310, Top = 92, Width = 130, ForeColor = Color.LightGray };
+
+            btnRestartApp = new Button
+            {
+                Text = "Restart App", Left = 450, Top = 85, Width = 90, Height = 30,
+                BackColor = cBtn, ForeColor = cText, FlatStyle = FlatStyle.Flat,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            btnRestartApp.FlatAppearance.BorderColor = cBtnBorder;
+            btnRestartApp.Click += (s, e) => RestartPcServer();
+
+            btnCloseApp = new Button
+            {
+                Text = "Close App", Left = 545, Top = 85, Width = 90, Height = 30,
+                BackColor = cBtn, ForeColor = cText, FlatStyle = FlatStyle.Flat,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            btnCloseApp.FlatAppearance.BorderColor = cBtnBorder;
+            btnCloseApp.Click += (s, e) => ClosePcServer();
+
+            btnRestartPC = new Button
+            {
+                Text = "Restart PC", Left = 660, Top = 85, Width = 90, Height = 30,
+                BackColor = Color.FromArgb(180, 80, 0), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            btnRestartPC.Click += (s, e) => {
+                if (MessageBox.Show("Are you sure you want to restart this computer?", "Restart PC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) {
+                    RestartComputer();
+                }
+            };
+
+            btnShutdownPC = new Button
+            {
+                Text = "Shutdown PC", Left = 755, Top = 85, Width = 90, Height = 30,
+                BackColor = Color.FromArgb(180, 40, 30), ForeColor = Color.White, FlatStyle = FlatStyle.Flat,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
+            };
+            btnShutdownPC.Click += (s, e) => {
+                if (MessageBox.Show("Are you sure you want to shut down this computer?", "Shutdown PC", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) {
+                    ShutdownComputer();
+                }
+            };
+
+            grpTunarrAndSecurity.Controls.Add(lblPassword);
+            grpTunarrAndSecurity.Controls.Add(txtPassword);
+            grpTunarrAndSecurity.Controls.Add(chkWaitForTunarr);
+            grpTunarrAndSecurity.Controls.Add(chkTunarrUseService);
+            grpTunarrAndSecurity.Controls.Add(lblTunarrServiceName);
+            grpTunarrAndSecurity.Controls.Add(txtTunarrServiceName);
+            grpTunarrAndSecurity.Controls.Add(lblTunarrExePath);
+            grpTunarrAndSecurity.Controls.Add(txtTunarrExePath);
+            grpTunarrAndSecurity.Controls.Add(btnBrowseTunarr);
+            grpTunarrAndSecurity.Controls.Add(btnStartTunarr);
+            grpTunarrAndSecurity.Controls.Add(btnRestartTunarr);
+            grpTunarrAndSecurity.Controls.Add(btnStopTunarr);
+            grpTunarrAndSecurity.Controls.Add(lblTunarrStatus);
+            grpTunarrAndSecurity.Controls.Add(btnRestartApp);
+            grpTunarrAndSecurity.Controls.Add(btnCloseApp);
+            grpTunarrAndSecurity.Controls.Add(btnRestartPC);
+            grpTunarrAndSecurity.Controls.Add(btnShutdownPC);
+
+            this.Controls.Add(grpTunarrAndSecurity);
+
+            _tmrTunarrStatus.Interval = 2000;
+            _tmrTunarrStatus.Tick += (s, e) => {
+                bool isRunning = IsTunarrRunning();
+                lblTunarrStatus.Text = "Status: " + (isRunning ? "Running" : "Stopped");
+                lblTunarrStatus.ForeColor = isRunning ? Color.LightGreen : Color.Coral;
+            };
+            _tmrTunarrStatus.Start();
+
+            int rightEdge = grpTunarrAndSecurity.Width;
+            btnShutdownPC.Left = rightEdge - 100;
+            btnRestartPC.Left = rightEdge - 195;
+            btnCloseApp.Left = rightEdge - 310;
+            btnRestartApp.Left = rightEdge - 405;
+        }
+
+        private void ChkTunarrUseService_CheckedChanged(object? sender, EventArgs e)
+        {
+            txtTunarrServiceName.Enabled = chkTunarrUseService.Checked;
+            txtTunarrExePath.Enabled = !chkTunarrUseService.Checked;
+            btnBrowseTunarr.Enabled = !chkTunarrUseService.Checked;
+        }
+
+        private void BtnBrowseTunarr_Click(object? sender, EventArgs e)
+        {
+            using (var ofd = new OpenFileDialog())
+            {
+                ofd.Filter = "Executables|*.exe;*.cmd;*.bat|All files|*.*";
+                ofd.Title = "Select Tunarr Executable";
+                if (ofd.ShowDialog(this) == DialogResult.OK)
+                {
+                    txtTunarrExePath.Text = ofd.FileName;
+                }
+            }
+        }
+
+        public void StartTunarr()
+        {
+            try
+            {
+                if (_currentConfig.TunarrUseService)
+                {
+                    string serviceName = string.IsNullOrWhiteSpace(_currentConfig.TunarrServiceName) ? "Tunarr" : _currentConfig.TunarrServiceName;
+                    AppendLog($"Starting Tunarr Windows Service: {serviceName}...");
+                    RunCommand("cmd.exe", $"/c net start \"{serviceName}\"");
+                }
+                else
+                {
+                    if (string.IsNullOrWhiteSpace(_currentConfig.TunarrExePath))
+                    {
+                        AppendLog("Error: Tunarr executable path is not configured.");
+                        return;
+                    }
+                    if (!File.Exists(_currentConfig.TunarrExePath))
+                    {
+                        AppendLog($"Error: Tunarr executable not found at {_currentConfig.TunarrExePath}");
+                        return;
+                    }
+                    AppendLog($"Starting Tunarr process: {_currentConfig.TunarrExePath}...");
+                    var startInfo = new ProcessStartInfo
+                    {
+                        FileName = _currentConfig.TunarrExePath,
+                        WorkingDirectory = Path.GetDirectoryName(_currentConfig.TunarrExePath),
+                        UseShellExecute = true
+                    };
+                    Process.Start(startInfo);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Failed to start Tunarr: {ex.Message}");
+            }
+        }
+
+        public void StopTunarr()
+        {
+            try
+            {
+                if (_currentConfig.TunarrUseService)
+                {
+                    string serviceName = string.IsNullOrWhiteSpace(_currentConfig.TunarrServiceName) ? "Tunarr" : _currentConfig.TunarrServiceName;
+                    AppendLog($"Stopping Tunarr Windows Service: {serviceName}...");
+                    RunCommand("cmd.exe", $"/c net stop \"{serviceName}\"");
+                }
+                else
+                {
+                    AppendLog("Stopping Tunarr process...");
+                    string processName = "tunarr";
+                    if (!string.IsNullOrWhiteSpace(_currentConfig.TunarrExePath))
+                    {
+                        processName = Path.GetFileNameWithoutExtension(_currentConfig.TunarrExePath);
+                    }
+                    var processes = Process.GetProcessesByName(processName);
+                    int killed = 0;
+                    foreach (var p in processes)
+                    {
+                        try
+                        {
+                            p.Kill(entireProcessTree: true);
+                            killed++;
+                        }
+                        catch { }
+                    }
+                    AppendLog($"Terminated {killed} process(es) matching name '{processName}'.");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Failed to stop Tunarr: {ex.Message}");
+            }
+        }
+
+        public void RestartTunarr()
+        {
+            AppendLog("Restarting Tunarr...");
+            StopTunarr();
+            Thread.Sleep(1500);
+            StartTunarr();
+        }
+
+        public bool IsTunarrRunning()
+        {
+            try
+            {
+                if (_currentConfig.TunarrUseService)
+                {
+                    string serviceName = string.IsNullOrWhiteSpace(_currentConfig.TunarrServiceName) ? "Tunarr" : _currentConfig.TunarrServiceName;
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "sc",
+                        Arguments = $"query \"{serviceName}\"",
+                        RedirectStandardOutput = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    using var process = Process.Start(psi);
+                    if (process != null)
+                    {
+                        string output = process.StandardOutput.ReadToEnd();
+                        process.WaitForExit();
+                        return output.Contains("STATE") && output.Contains("RUNNING");
+                    }
+                    return false;
+                }
+                else
+                {
+                    string processName = "tunarr";
+                    if (!string.IsNullOrWhiteSpace(_currentConfig.TunarrExePath))
+                    {
+                        processName = Path.GetFileNameWithoutExtension(_currentConfig.TunarrExePath);
+                    }
+                    return Process.GetProcessesByName(processName).Length > 0;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private void RunCommand(string fileName, string arguments)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = fileName,
+                    Arguments = arguments,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using var process = Process.Start(psi);
+                if (process != null)
+                {
+                    string output = process.StandardOutput.ReadToEnd();
+                    string error = process.StandardError.ReadToEnd();
+                    process.WaitForExit();
+                    if (!string.IsNullOrWhiteSpace(output)) AppendLog(output.Trim());
+                    if (!string.IsNullOrWhiteSpace(error)) AppendLog("Error: " + error.Trim());
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Command execution failed: {ex.Message}");
+            }
+        }
+
+        public void RestartPcServer()
+        {
+            AppendLog("Restarting Tunarr Dummy Starter application...");
+            Application.Restart();
+            Environment.Exit(0);
+        }
+
+        public void ClosePcServer()
+        {
+            AppendLog("Exiting Tunarr Dummy Starter application...");
+            _allowClose = true;
+            Application.Exit();
+        }
+
+        public void RestartComputer()
+        {
+            AppendLog("Restarting computer...");
+            Process.Start("shutdown", "/r /t 2");
+        }
+
+        public void ShutdownComputer()
+        {
+            AppendLog("Shutting down computer...");
+            Process.Start("shutdown", "/s /t 2");
+        }
     }
 
     public sealed class AppConfig
@@ -651,6 +1068,16 @@ namespace TunarrDummyStart
 
         public int WebserverPort { get; set; } = 1290;
 
+        public string WebserverPassword { get; set; } = string.Empty;
+
+        public bool TunarrUseService { get; set; } = false;
+
+        public string TunarrServiceName { get; set; } = "Tunarr";
+
+        public string TunarrExePath { get; set; } = string.Empty;
+
+        public bool WaitForTunarr { get; set; } = false;
+
         public List<ChannelConfig> Channels { get; set; } = new();
 
         public static AppConfig CreateDefault()
@@ -670,6 +1097,11 @@ namespace TunarrDummyStart
                 ThreadsPerProcess = 0,
                 EnableWebserver = true,
                 WebserverPort = 1290,
+                WebserverPassword = string.Empty,
+                TunarrUseService = false,
+                TunarrServiceName = "Tunarr",
+                TunarrExePath = string.Empty,
+                WaitForTunarr = false,
                 Channels = new List<ChannelConfig>()
             };
         }

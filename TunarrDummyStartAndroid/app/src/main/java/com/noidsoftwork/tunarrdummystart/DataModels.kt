@@ -16,6 +16,11 @@ data class AppConfig(
     var threadsPerProcess: Int = 0,
     var enableWebserver: Boolean = true,
     var webserverPort: Int = 1290,
+    var webserverPassword: String = "",
+    var tunarrUseService: Boolean = false,
+    var tunarrServiceName: String = "Tunarr",
+    var tunarrExePath: String = "",
+    var waitForTunarr: Boolean = false,
     var channels: List<ChannelConfig> = emptyList()
 ) : Serializable
 

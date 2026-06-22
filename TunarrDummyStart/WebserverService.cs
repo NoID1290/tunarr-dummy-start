@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Security;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -21,10 +24,20 @@ namespace TunarrDummyStart
         private readonly Func<bool> _isRunnerRunning;
         private readonly Action<string> _logMessage;
 
+        private readonly Action _startTunarr;
+        private readonly Action _stopTunarr;
+        private readonly Action _restartTunarr;
+        private readonly Func<bool> _isTunarrRunning;
+        private readonly Action _restartPcServer;
+        private readonly Action _closePcServer;
+        private readonly Action _restartComputer;
+        private readonly Action _shutdownComputer;
+
         private TcpListener? _listener;
         private CancellationTokenSource? _cts;
         private int _port;
         private bool _isRunning;
+        private X509Certificate2? _serverCertificate;
 
         public bool IsRunning => _isRunning;
         public int Port => _port;
@@ -37,7 +50,15 @@ namespace TunarrDummyStart
             Action startRunner,
             Action stopRunner,
             Func<bool> isRunnerRunning,
-            Action<string> logMessage)
+            Action<string> logMessage,
+            Action startTunarr,
+            Action stopTunarr,
+            Action restartTunarr,
+            Func<bool> isTunarrRunning,
+            Action restartPcServer,
+            Action closePcServer,
+            Action restartComputer,
+            Action shutdownComputer)
         {
             _getConfig = getConfig;
             _saveConfig = saveConfig;
@@ -47,6 +68,56 @@ namespace TunarrDummyStart
             _stopRunner = stopRunner;
             _isRunnerRunning = isRunnerRunning;
             _logMessage = logMessage;
+
+            _startTunarr = startTunarr;
+            _stopTunarr = stopTunarr;
+            _restartTunarr = restartTunarr;
+            _isTunarrRunning = isTunarrRunning;
+            _restartPcServer = restartPcServer;
+            _closePcServer = closePcServer;
+            _restartComputer = restartComputer;
+            _shutdownComputer = shutdownComputer;
+        }
+
+        private X509Certificate2 GetOrCreateCertificate()
+        {
+            if (_serverCertificate != null) return _serverCertificate;
+
+            using (RSA rsa = RSA.Create(2048))
+            {
+                var request = new CertificateRequest(
+                    "CN=localhost",
+                    rsa,
+                    HashAlgorithmName.SHA256,
+                    RSASignaturePadding.Pkcs1);
+
+                request.CertificateExtensions.Add(
+                    new X509BasicConstraintsExtension(false, false, 0, false));
+
+                request.CertificateExtensions.Add(
+                    new X509KeyUsageExtension(
+                        X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment,
+                        false));
+
+                request.CertificateExtensions.Add(
+                    new X509EnhancedKeyUsageExtension(
+                        new OidCollection { new Oid("1.3.6.1.5.5.7.3.1") },
+                        false));
+
+                var sanBuilder = new SubjectAlternativeNameBuilder();
+                sanBuilder.AddDnsName("localhost");
+                sanBuilder.AddIpAddress(IPAddress.Loopback);
+                sanBuilder.AddIpAddress(IPAddress.IPv6Loopback);
+                sanBuilder.AddIpAddress(IPAddress.Any);
+                request.CertificateExtensions.Add(sanBuilder.Build());
+
+                var certificate = request.CreateSelfSigned(
+                    DateTimeOffset.UtcNow.AddDays(-1),
+                    DateTimeOffset.UtcNow.AddYears(10));
+
+                _serverCertificate = new X509Certificate2(certificate.Export(X509ContentType.Pfx), (string?)null);
+                return _serverCertificate;
+            }
         }
 
         public void Start(int port)
@@ -67,7 +138,10 @@ namespace TunarrDummyStart
                 _listener = new TcpListener(IPAddress.Any, port);
                 _listener.Start();
                 _isRunning = true;
-                _logMessage($"Web server started remotely at http://*:{port}/");
+                var config = _getConfig();
+                bool useSsl = !string.IsNullOrEmpty(config.WebserverPassword);
+                string proto = useSsl ? "https" : "http";
+                _logMessage($"Web server started remotely at {proto}://*:{port}/ (Password protection: {(useSsl ? "Enabled" : "Disabled")})");
                 Task.Run(() => ListenLoopAsync(_cts.Token));
             }
             catch (Exception ex)
@@ -120,13 +194,28 @@ namespace TunarrDummyStart
         private async Task HandleClientAsync(TcpClient client)
         {
             using (client)
-            using (var stream = client.GetStream())
             {
+                Stream stream = client.GetStream();
+                SslStream? sslStream = null;
                 try
                 {
-                    // Set read and write timeouts to prevent hanging sockets
-                    stream.ReadTimeout = 5000;
-                    stream.WriteTimeout = 5000;
+                    var config = _getConfig();
+                    bool useSsl = !string.IsNullOrEmpty(config.WebserverPassword);
+
+                    if (useSsl)
+                    {
+                        var cert = GetOrCreateCertificate();
+                        sslStream = new SslStream(stream, false);
+                        await sslStream.AuthenticateAsServerAsync(cert);
+                        stream = sslStream;
+                    }
+
+                    try
+                    {
+                        stream.ReadTimeout = 5000;
+                        stream.WriteTimeout = 5000;
+                    }
+                    catch { }
 
                     // Read request header
                     var headerBuffer = new List<byte>();
@@ -204,6 +293,50 @@ namespace TunarrDummyStart
                     if (method == "OPTIONS")
                     {
                         await SendCorsOkAsync(stream);
+                        return;
+                    }
+
+                    // Authentication check (except OPTIONS)
+                    bool isAuthenticated = false;
+                    if (string.IsNullOrEmpty(config.WebserverPassword))
+                    {
+                        isAuthenticated = true;
+                    }
+                    else
+                    {
+                        string? authHeader = null;
+                        foreach (string line in lines)
+                        {
+                            if (line.StartsWith("Authorization:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                authHeader = line.Substring(14).Trim();
+                                break;
+                            }
+                        }
+
+                        if (authHeader != null && authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try
+                            {
+                                string base64 = authHeader.Substring(6).Trim();
+                                string credentials = Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+                                int colonIdx = credentials.IndexOf(':');
+                                if (colonIdx >= 0)
+                                {
+                                    string password = credentials.Substring(colonIdx + 1);
+                                    if (password == config.WebserverPassword)
+                                    {
+                                        isAuthenticated = true;
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    if (!isAuthenticated)
+                    {
+                        await SendUnauthorizedResponseAsync(stream);
                         return;
                     }
 
@@ -291,6 +424,86 @@ namespace TunarrDummyStart
                         return;
                     }
 
+                    if (method == "POST" && path == "/api/tunarr/start")
+                    {
+                        _startTunarr();
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/tunarr/stop")
+                    {
+                        _stopTunarr();
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/tunarr/restart")
+                    {
+                        _restartTunarr();
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "GET" && path == "/api/tunarr/status")
+                    {
+                        var status = new { isRunning = _isTunarrRunning() };
+                        string json = JsonSerializer.Serialize(status, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/pcserver/restart")
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(500);
+                            _restartPcServer();
+                        });
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/pcserver/close")
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(500);
+                            _closePcServer();
+                        });
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/pc/restart")
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(500);
+                            _restartComputer();
+                        });
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
+                    if (method == "POST" && path == "/api/pc/shutdown")
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(500);
+                            _shutdownComputer();
+                        });
+                        string json = JsonSerializer.Serialize(new { success = true });
+                        await SendResponseAsync(stream, 200, "application/json; charset=utf-8", Encoding.UTF8.GetBytes(json));
+                        return;
+                    }
+
                     await SendErrorResponseAsync(stream, 404, "Not Found");
                 }
                 catch (Exception)
@@ -301,10 +514,14 @@ namespace TunarrDummyStart
                     }
                     catch { }
                 }
+                finally
+                {
+                    sslStream?.Dispose();
+                }
             }
         }
 
-        private async Task SendResponseAsync(NetworkStream stream, int statusCode, string contentType, byte[] bodyBytes)
+        private async Task SendResponseAsync(Stream stream, int statusCode, string contentType, byte[] bodyBytes)
         {
             var headerSb = new StringBuilder();
             headerSb.Append($"HTTP/1.1 {statusCode} {GetStatusCodePhrase(statusCode)}\r\n");
@@ -312,7 +529,7 @@ namespace TunarrDummyStart
             headerSb.Append($"Content-Length: {bodyBytes.Length}\r\n");
             headerSb.Append("Access-Control-Allow-Origin: *\r\n");
             headerSb.Append("Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n");
-            headerSb.Append("Access-Control-Allow-Headers: Content-Type\r\n");
+            headerSb.Append("Access-Control-Allow-Headers: Content-Type, Authorization\r\n");
             headerSb.Append("Connection: close\r\n\r\n");
 
             byte[] headerBytes = Encoding.UTF8.GetBytes(headerSb.ToString());
@@ -324,15 +541,32 @@ namespace TunarrDummyStart
             await stream.FlushAsync();
         }
 
-        private async Task SendErrorResponseAsync(NetworkStream stream, int statusCode, string message)
+        private async Task SendErrorResponseAsync(Stream stream, int statusCode, string message)
         {
             byte[] bodyBytes = Encoding.UTF8.GetBytes(message);
             await SendResponseAsync(stream, statusCode, "text/plain; charset=utf-8", bodyBytes);
         }
 
-        private async Task SendCorsOkAsync(NetworkStream stream)
+        private async Task SendCorsOkAsync(Stream stream)
         {
             await SendResponseAsync(stream, 200, "text/plain", Array.Empty<byte>());
+        }
+
+        private async Task SendUnauthorizedResponseAsync(Stream stream)
+        {
+            var headerSb = new StringBuilder();
+            headerSb.Append("HTTP/1.1 401 Unauthorized\r\n");
+            headerSb.Append("WWW-Authenticate: Basic realm=\"TunarrDummyStart\"\r\n");
+            headerSb.Append("Content-Length: 12\r\n");
+            headerSb.Append("Content-Type: text/plain; charset=utf-8\r\n");
+            headerSb.Append("Access-Control-Allow-Origin: *\r\n");
+            headerSb.Append("Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n");
+            headerSb.Append("Access-Control-Allow-Headers: Content-Type, Authorization\r\n");
+            headerSb.Append("Connection: close\r\n\r\n");
+            headerSb.Append("Unauthorized");
+            byte[] bytes = Encoding.UTF8.GetBytes(headerSb.ToString());
+            await stream.WriteAsync(bytes, 0, bytes.Length);
+            await stream.FlushAsync();
         }
 
         private static string GetStatusCodePhrase(int code) => code switch
@@ -847,6 +1081,40 @@ namespace TunarrDummyStart
             </div>
         </div>
 
+        <!-- System and Tunarr Controls card -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">System & Service Control</div>
+                <span id="tunarrStatusBadge" class="channel-state-badge" style="background:var(--state-idle-bg); color:var(--state-idle-accent);">Tunarr: Checking...</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:1.25rem;">
+                <div>
+                    <span style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.5rem; font-weight:600;">Tunarr Service:</span>
+                    <div class="controls-row">
+                        <button class="btn btn-primary" onclick="controlTunarr('start')">Start</button>
+                        <button class="btn btn-secondary" onclick="controlTunarr('restart')">Restart</button>
+                        <button class="btn btn-danger" onclick="controlTunarr('stop')">Stop</button>
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div>
+                        <span style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.5rem; font-weight:600;">PC Server App:</span>
+                        <div class="controls-row">
+                            <button class="btn btn-secondary" style="width:100%;" onclick="controlPcServer('pcserver/restart')">Restart App</button>
+                            <button class="btn btn-danger" style="width:100%;" onclick="controlPcServer('pcserver/close')">Close App</button>
+                        </div>
+                    </div>
+                    <div>
+                        <span style="font-size:0.85rem; color:var(--text-muted); display:block; margin-bottom:0.5rem; font-weight:600;">Host Computer Power:</span>
+                        <div class="controls-row">
+                            <button class="btn btn-secondary" style="border-color:#f59e0b; color:#f59e0b; width:100%;" onclick="controlPcServer('pc/restart', true)">Restart PC</button>
+                            <button class="btn btn-danger" style="width:100%;" onclick="controlPcServer('pc/shutdown', true)">Shutdown PC</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="dashboard-grid">
             <!-- Channel Status Section -->
             <div class="card">
@@ -923,6 +1191,38 @@ namespace TunarrDummyStart
                             <label for="nudWebPort">Web Server Port</label>
                             <input type="number" id="nudWebPort" min="1" max="65535" required>
                         </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="txtWebserverPassword">Web Server Password (HTTPS if set)</label>
+                        <input type="password" id="txtWebserverPassword">
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="chkWaitForTunarr">Wait for Tunarr on Startup</label>
+                            <select id="chkWaitForTunarr">
+                                <option value="true">Yes</option>
+                                <option value="false">No</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="chkTunarrUseService">Use Service instead of Process</label>
+                            <select id="chkTunarrUseService">
+                                <option value="true">Yes</option>
+                                <option value="false">No</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="txtTunarrServiceName">Tunarr Service Name</label>
+                        <input type="text" id="txtTunarrServiceName">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="txtTunarrExePath">Tunarr Exe Path (for process mode)</label>
+                        <input type="text" id="txtTunarrExePath">
                     </div>
 
                     <div class="form-group">
@@ -1116,6 +1416,11 @@ namespace TunarrDummyStart
                 document.getElementById('chkWebserver').value = config.enableWebserver.toString();
                 document.getElementById('nudWebPort').value = config.webserverPort;
                 document.getElementById('txtFfmpegPath').value = config.ffmpegPath || '';
+                document.getElementById('txtWebserverPassword').value = config.webserverPassword || '';
+                document.getElementById('chkWaitForTunarr').value = config.waitForTunarr.toString();
+                document.getElementById('chkTunarrUseService').value = config.tunarrUseService.toString();
+                document.getElementById('txtTunarrServiceName').value = config.tunarrServiceName || '';
+                document.getElementById('txtTunarrExePath').value = config.tunarrExePath || '';
 
                 currentChannels = config.channels || [];
             } catch (err) {
@@ -1139,6 +1444,11 @@ namespace TunarrDummyStart
                 enableWebserver: document.getElementById('chkWebserver').value === 'true',
                 webserverPort: parseInt(document.getElementById('nudWebPort').value),
                 ffmpegPath: document.getElementById('txtFfmpegPath').value.trim(),
+                webserverPassword: document.getElementById('txtWebserverPassword').value,
+                waitForTunarr: document.getElementById('chkWaitForTunarr').value === 'true',
+                tunarrUseService: document.getElementById('chkTunarrUseService').value === 'true',
+                tunarrServiceName: document.getElementById('txtTunarrServiceName').value.trim(),
+                tunarrExePath: document.getElementById('txtTunarrExePath').value.trim(),
                 channels: currentChannels
             };
 
@@ -1181,6 +1491,56 @@ namespace TunarrDummyStart
                 await fetch('/api/stop', { method: 'POST' });
                 fetchStatus();
             } catch (err) { alert('Failed to stop runner: ' + err); }
+        }
+
+        async function controlTunarr(action) {
+            try {
+                const res = await fetch(`/api/tunarr/${action}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    fetchTunarrStatus();
+                } else {
+                    alert('Action failed');
+                }
+            } catch (err) { alert('Failed to control Tunarr service: ' + err); }
+        }
+
+        async function controlPcServer(endpoint, confirmRequired = false) {
+            if (confirmRequired && !confirm('Are you sure you want to perform this action?')) {
+                return;
+            }
+            try {
+                const res = await fetch(`/api/${endpoint}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    alert('Request sent successfully');
+                } else {
+                    alert('Action failed');
+                }
+            } catch (err) { alert('Failed to send PC control request: ' + err); }
+        }
+
+        async function fetchTunarrStatus() {
+            try {
+                const res = await fetch('/api/tunarr/status');
+                if (!res.ok) throw new Error('API error');
+                const data = await res.json();
+                const badge = document.getElementById('tunarrStatusBadge');
+                if (data.isRunning) {
+                    badge.innerText = 'Tunarr: Running';
+                    badge.style.background = 'rgba(16, 185, 129, 0.15)';
+                    badge.style.color = '#10b981';
+                } else {
+                    badge.innerText = 'Tunarr: Stopped';
+                    badge.style.background = 'rgba(239, 68, 68, 0.15)';
+                    badge.style.color = '#ef4444';
+                }
+            } catch (err) {
+                const badge = document.getElementById('tunarrStatusBadge');
+                badge.innerText = 'Tunarr: Unknown';
+                badge.style.background = 'rgba(107, 114, 128, 0.15)';
+                badge.style.color = '#9ca3af';
+            }
         }
 
         function clearConsole() {
@@ -1262,10 +1622,12 @@ namespace TunarrDummyStart
         fetchConfig();
         fetchStatus();
         fetchLogs();
+        fetchTunarrStatus();
 
         // Polling
         setInterval(fetchStatus, 1000);
         setInterval(fetchLogs, 1000);
+        setInterval(fetchTunarrStatus, 2000);
     </script>
 </body>
 </html>

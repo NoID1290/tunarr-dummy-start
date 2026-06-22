@@ -36,7 +36,12 @@ public sealed class RegistryConfigStore
                 HwAccel = ReadString(key, nameof(AppConfig.HwAccel), config.HwAccel),
                 ThreadsPerProcess = ReadInt(key, nameof(AppConfig.ThreadsPerProcess), config.ThreadsPerProcess),
                 EnableWebserver = ReadBool(key, nameof(AppConfig.EnableWebserver), config.EnableWebserver),
-                WebserverPort = ReadInt(key, nameof(AppConfig.WebserverPort), config.WebserverPort)
+                WebserverPort = ReadInt(key, nameof(AppConfig.WebserverPort), config.WebserverPort),
+                WebserverPassword = ReadString(key, nameof(AppConfig.WebserverPassword), config.WebserverPassword),
+                TunarrUseService = ReadBool(key, nameof(AppConfig.TunarrUseService), config.TunarrUseService),
+                TunarrServiceName = ReadString(key, nameof(AppConfig.TunarrServiceName), config.TunarrServiceName),
+                TunarrExePath = ReadString(key, nameof(AppConfig.TunarrExePath), config.TunarrExePath),
+                WaitForTunarr = ReadBool(key, nameof(AppConfig.WaitForTunarr), config.WaitForTunarr)
             };
 
             string channelsJson = ReadString(key, "ChannelsJson", "[]");
@@ -88,6 +93,11 @@ public sealed class RegistryConfigStore
         key.SetValue(nameof(AppConfig.ThreadsPerProcess), config.ThreadsPerProcess, RegistryValueKind.DWord);
         key.SetValue(nameof(AppConfig.EnableWebserver), config.EnableWebserver ? 1 : 0, RegistryValueKind.DWord);
         key.SetValue(nameof(AppConfig.WebserverPort), config.WebserverPort, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.WebserverPassword), config.WebserverPassword, RegistryValueKind.String);
+        key.SetValue(nameof(AppConfig.TunarrUseService), config.TunarrUseService ? 1 : 0, RegistryValueKind.DWord);
+        key.SetValue(nameof(AppConfig.TunarrServiceName), config.TunarrServiceName, RegistryValueKind.String);
+        key.SetValue(nameof(AppConfig.TunarrExePath), config.TunarrExePath, RegistryValueKind.String);
+        key.SetValue(nameof(AppConfig.WaitForTunarr), config.WaitForTunarr ? 1 : 0, RegistryValueKind.DWord);
         key.SetValue("ChannelsJson", JsonSerializer.Serialize(config.Channels), RegistryValueKind.String);
     }
 
