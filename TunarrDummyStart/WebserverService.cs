@@ -38,6 +38,7 @@ namespace TunarrDummyStart
         private int _port;
         private bool _isRunning;
         private X509Certificate2? _serverCertificate;
+        private DateTime _lastSslErrorTime = DateTime.MinValue;
 
         public bool IsRunning => _isRunning;
         public int Port => _port;
@@ -214,7 +215,11 @@ namespace TunarrDummyStart
                         }
                         catch (Exception ex)
                         {
-                            _logMessage($"SSL handshake failed (did you connect via HTTP instead of HTTPS?): {ex.Message}");
+                            if ((DateTime.UtcNow - _lastSslErrorTime).TotalSeconds >= 10)
+                            {
+                                _logMessage($"SSL handshake failed (did you connect via HTTP instead of HTTPS?): {ex.Message}. Suppressing identical errors for 10s.");
+                                _lastSslErrorTime = DateTime.UtcNow;
+                            }
                             return;
                         }
                     }
