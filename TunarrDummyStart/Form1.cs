@@ -833,10 +833,13 @@ namespace TunarrDummyStart
             this.Controls.Add(grpTunarrAndSecurity);
 
             _tmrTunarrStatus.Interval = 2000;
-            _tmrTunarrStatus.Tick += (s, e) => {
-                bool isRunning = IsTunarrRunning();
-                lblTunarrStatus.Text = "Status: " + (isRunning ? "Running" : "Stopped");
-                lblTunarrStatus.ForeColor = isRunning ? Color.LightGreen : Color.Coral;
+            _tmrTunarrStatus.Tick += async (s, e) => {
+                bool isRunning = await Task.Run(() => IsTunarrRunning());
+                if (!this.IsDisposed && !this.Disposing)
+                {
+                    lblTunarrStatus.Text = "Status: " + (isRunning ? "Running" : "Stopped");
+                    lblTunarrStatus.ForeColor = isRunning ? Color.LightGreen : Color.Coral;
+                }
             };
             _tmrTunarrStatus.Start();
 

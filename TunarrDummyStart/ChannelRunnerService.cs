@@ -130,6 +130,7 @@ internal sealed class ChannelRunnerService
             
         int maxAttempts = (chanConfig.RetryCount ?? config.RetryCount) + 1;
         TimeSpan retryDelay = TimeSpan.FromMilliseconds(Math.Max(0, config.RetryDelayMs));
+        string currentHwAccel = resolvedHwAccel;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -137,7 +138,7 @@ internal sealed class ChannelRunnerService
             UpdateStatus(channel, ChannelRunState.Connecting, attempt, maxAttempts, $"Connecting to {url}", null, false, TimeSpan.Zero);
             _log($"Channel {channel}: connecting (attempt {attempt}/{maxAttempts}) -> {url}");
 
-            ChannelRunResult result = await RunPersistentClientOnceAsync(channel, config, ffmpegExecutable, url, resolvedHwAccel, gpuCount, workerIndex, attempt, maxAttempts, token);
+            ChannelRunResult result = await RunPersistentClientOnceAsync(channel, config, ffmpegExecutable, url, currentHwAccel, gpuCount, workerIndex, attempt, maxAttempts, token);
             if (result.State == ChannelRunState.Canceled)
             {
                 UpdateStatus(channel, ChannelRunState.Canceled, attempt, maxAttempts, "Stopped", result.ExitCode, result.ConnectionEstablished, result.RunDuration);
@@ -150,6 +151,12 @@ internal sealed class ChannelRunnerService
 
             if (attempt < maxAttempts)
             {
+                if (!string.Equals(currentHwAccel, "None", StringComparison.OrdinalIgnoreCase))
+                {
+                    _log($"Channel {channel}: hardware acceleration '{currentHwAccel}' failed or disconnected, falling back to CPU for next attempt.");
+                    currentHwAccel = "None";
+                }
+
                 string waitText = retryDelay.TotalSeconds >= 1
                     ? $"Waiting {retryDelay.TotalSeconds:F1}s before retry"
                     : $"Waiting {retryDelay.TotalMilliseconds:F0}ms before retry";
@@ -191,8 +198,8 @@ internal sealed class ChannelRunnerService
         if (!string.IsNullOrEmpty(hwAccelArgs)) argParts.Add(hwAccelArgs);
         argParts.Add($"-i \"{url}\"");
         
-        // Omit "-c copy" (stream copy) so FFmpeg decodes the video/audio streams (demux only)
-        argParts.Add("-f null -");
+        // Use "-c copy" (stream copy) so FFmpeg ONLY demuxes the streams without decoding them, drastically reducing CPU usage
+        argParts.Add("-c copy -f null -");
         string arguments = string.Join(" ", argParts);
 
         ProcessStartInfo startInfo = new()
