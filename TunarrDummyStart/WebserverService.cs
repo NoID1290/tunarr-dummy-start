@@ -228,21 +228,35 @@ namespace TunarrDummyStart
 
                     // Read request header
                     var headerBuffer = new List<byte>();
-                    byte[] temp = new byte[1];
-                    while (true)
-                    {
-                        int bytesRead = await stream.ReadAsync(temp, 0, 1);
-                        if (bytesRead <= 0) break;
-                        headerBuffer.Add(temp[0]);
+                    var leftoverBodyBuffer = new List<byte>();
+                    byte[] buffer = new byte[4096];
+                    bool headerFound = false;
 
-                        // Check for ending sequence \r\n\r\n
-                        if (headerBuffer.Count >= 4 &&
-                            headerBuffer[headerBuffer.Count - 4] == 13 && // \r
-                            headerBuffer[headerBuffer.Count - 3] == 10 && // \n
-                            headerBuffer[headerBuffer.Count - 2] == 13 && // \r
-                            headerBuffer[headerBuffer.Count - 1] == 10)   // \n
+                    while (!headerFound)
+                    {
+                        int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                        if (bytesRead <= 0) break;
+                        
+                        for (int i = 0; i < bytesRead; i++)
                         {
-                            break;
+                            if (!headerFound)
+                            {
+                                headerBuffer.Add(buffer[i]);
+
+                                // Check for ending sequence \r\n\r\n
+                                if (headerBuffer.Count >= 4 &&
+                                    headerBuffer[headerBuffer.Count - 4] == 13 && // \r
+                                    headerBuffer[headerBuffer.Count - 3] == 10 && // \n
+                                    headerBuffer[headerBuffer.Count - 2] == 13 && // \r
+                                    headerBuffer[headerBuffer.Count - 1] == 10)   // \n
+                                {
+                                    headerFound = true;
+                                }
+                            }
+                            else
+                            {
+                                leftoverBodyBuffer.Add(buffer[i]);
+                            }
                         }
 
                         if (headerBuffer.Count > 8192) // Limit header size
@@ -252,7 +266,7 @@ namespace TunarrDummyStart
                         }
                     }
 
-                    if (headerBuffer.Count == 0) return;
+                    if (!headerFound || headerBuffer.Count == 0) return;
 
                     string headerText = Encoding.UTF8.GetString(headerBuffer.ToArray());
                     string[] lines = headerText.Split(new[] { "\r\n" }, StringSplitOptions.None);
@@ -289,6 +303,15 @@ namespace TunarrDummyStart
                     {
                         byte[] bodyBytes = new byte[contentLength];
                         int totalRead = 0;
+                        
+                        // Copy leftovers first
+                        int leftoversToCopy = Math.Min(leftoverBodyBuffer.Count, contentLength);
+                        if (leftoversToCopy > 0)
+                        {
+                            leftoverBodyBuffer.CopyTo(0, bodyBytes, 0, leftoversToCopy);
+                            totalRead += leftoversToCopy;
+                        }
+
                         while (totalRead < contentLength)
                         {
                             int read = await stream.ReadAsync(bodyBytes, totalRead, contentLength - totalRead);

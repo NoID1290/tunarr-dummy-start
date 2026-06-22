@@ -951,22 +951,8 @@ namespace TunarrDummyStart
                 if (_currentConfig.TunarrUseService)
                 {
                     string serviceName = string.IsNullOrWhiteSpace(_currentConfig.TunarrServiceName) ? "Tunarr" : _currentConfig.TunarrServiceName;
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = "sc",
-                        Arguments = $"query \"{serviceName}\"",
-                        RedirectStandardOutput = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-                    using var process = Process.Start(psi);
-                    if (process != null)
-                    {
-                        string output = process.StandardOutput.ReadToEnd();
-                        process.WaitForExit();
-                        return output.Contains("STATE") && output.Contains("RUNNING");
-                    }
-                    return false;
+                    using var sc = new System.ServiceProcess.ServiceController(serviceName);
+                    return sc.Status == System.ServiceProcess.ServiceControllerStatus.Running;
                 }
                 else
                 {

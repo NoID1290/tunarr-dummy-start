@@ -167,6 +167,7 @@ internal sealed class ChannelRunnerService
         if (!string.IsNullOrEmpty(threadsArg)) argParts.Add(threadsArg);
         if (!string.IsNullOrEmpty(hwAccelArgs)) argParts.Add(hwAccelArgs);
         argParts.Add($"-i \"{url}\"");
+        argParts.Add("-c copy");
         argParts.Add("-f null -");
         string arguments = string.Join(" ", argParts);
 
