@@ -21,7 +21,14 @@ internal sealed class ChannelRunnerService
     public async Task RunKeepAliveLoopAsync(AppConfig config, string ffmpegExecutable, CancellationToken token)
     {
         var enabledChannels = config.Channels.Where(c => c.Enabled).OrderBy(c => c.ChannelId).ToList();
+
+        List<string> detectedBackends = await new FfmpegService().DetectHwAccelsAsync(ffmpegExecutable);
+        List<string> detectedGpus = FfmpegService.DetectHardwareGpus();
+        string resolvedHwAccel = FfmpegService.ResolveHwAccel(config.HwAccel, detectedBackends, detectedGpus);
+        int gpuCount = detectedGpus.Count;
+
         _log($"Starting keep-alive run. Channels={config.Channels.Count} (Enabled={enabledChannels.Count}), StartupDelay={config.StartupDelaySeconds}s, Stagger={config.StaggerDelayMs}ms, GlobalRetry={config.RetryCount}");
+        _log($"Hardware acceleration: config={config.HwAccel}, resolved={resolvedHwAccel}, detected GPUs={gpuCount} ({string.Join(", ", detectedGpus)})");
 
         _statuses.Clear();
         foreach (var chan in config.Channels)
@@ -80,7 +87,7 @@ internal sealed class ChannelRunnerService
         {
             token.ThrowIfCancellationRequested();
             var chanConfig = enabledChannels[i];
-            workers.Add(RunChannelWorkerAsync(chanConfig, config, ffmpegExecutable, token));
+            workers.Add(RunChannelWorkerAsync(chanConfig, config, ffmpegExecutable, resolvedHwAccel, gpuCount, i, token));
 
             if (i < enabledChannels.Count - 1 && config.StaggerDelayMs > 0)
             {
@@ -114,7 +121,7 @@ internal sealed class ChannelRunnerService
         }
     }
 
-    private async Task RunChannelWorkerAsync(ChannelConfig chanConfig, AppConfig config, string ffmpegExecutable, CancellationToken token)
+    private async Task RunChannelWorkerAsync(ChannelConfig chanConfig, AppConfig config, string ffmpegExecutable, string resolvedHwAccel, int gpuCount, int workerIndex, CancellationToken token)
     {
         int channel = chanConfig.ChannelId;
         string url = !string.IsNullOrWhiteSpace(chanConfig.Url) 
@@ -130,7 +137,7 @@ internal sealed class ChannelRunnerService
             UpdateStatus(channel, ChannelRunState.Connecting, attempt, maxAttempts, $"Connecting to {url}", null, false, TimeSpan.Zero);
             _log($"Channel {channel}: connecting (attempt {attempt}/{maxAttempts}) -> {url}");
 
-            ChannelRunResult result = await RunPersistentClientOnceAsync(channel, config, ffmpegExecutable, url, attempt, maxAttempts, token);
+            ChannelRunResult result = await RunPersistentClientOnceAsync(channel, config, ffmpegExecutable, url, resolvedHwAccel, gpuCount, workerIndex, attempt, maxAttempts, token);
             if (result.State == ChannelRunState.Canceled)
             {
                 UpdateStatus(channel, ChannelRunState.Canceled, attempt, maxAttempts, "Stopped", result.ExitCode, result.ConnectionEstablished, result.RunDuration);
@@ -157,17 +164,34 @@ internal sealed class ChannelRunnerService
         _log($"Channel {channel}: skipped after retry limit");
     }
 
-    private async Task<ChannelRunResult> RunPersistentClientOnceAsync(int channel, AppConfig config, string ffmpegExecutable, string url, int attempt, int maxAttempts, CancellationToken token)
+    private async Task<ChannelRunResult> RunPersistentClientOnceAsync(
+        int channel,
+        AppConfig config,
+        string ffmpegExecutable,
+        string url,
+        string resolvedHwAccel,
+        int gpuCount,
+        int workerIndex,
+        int attempt,
+        int maxAttempts,
+        CancellationToken token)
     {
         Stopwatch stopwatch = Stopwatch.StartNew();
 
-        string hwAccelArgs = FfmpegService.BuildHwAccelArgs(config.HwAccel);
+        int? gpuDeviceIndex = null;
+        if (!string.Equals(resolvedHwAccel, "None", StringComparison.OrdinalIgnoreCase))
+        {
+            gpuDeviceIndex = gpuCount > 1 ? (workerIndex % gpuCount) : null;
+        }
+
+        string hwAccelArgs = FfmpegService.BuildHwAccelArgs(resolvedHwAccel, gpuDeviceIndex);
         string threadsArg = config.ThreadsPerProcess > 0 ? $"-threads {config.ThreadsPerProcess}" : string.Empty;
         var argParts = new List<string> { "-hide_banner", "-loglevel error", "-nostdin" };
         if (!string.IsNullOrEmpty(threadsArg)) argParts.Add(threadsArg);
         if (!string.IsNullOrEmpty(hwAccelArgs)) argParts.Add(hwAccelArgs);
         argParts.Add($"-i \"{url}\"");
-        argParts.Add("-c copy");
+        
+        // Omit "-c copy" (stream copy) so FFmpeg decodes the video/audio streams (demux only)
         argParts.Add("-f null -");
         string arguments = string.Join(" ", argParts);
 
@@ -193,7 +217,8 @@ internal sealed class ChannelRunnerService
         }
 
         RegisterActiveProcess(channel, process);
-        _log($"Channel {channel}: ffmpeg process started (PID {process.Id})");
+        string gpuLogSuffix = gpuDeviceIndex.HasValue ? $" (GPU {gpuDeviceIndex.Value})" : string.Empty;
+        _log($"Channel {channel}: ffmpeg process started (PID {process.Id}){gpuLogSuffix} with args: {arguments}");
 
         Task<string> stdErrTask = process.StandardError.ReadToEndAsync(token);
         bool connectionEstablished = false;

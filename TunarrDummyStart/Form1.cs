@@ -45,7 +45,7 @@ namespace TunarrDummyStart
             InitializeCustomControls();
         }
 
-        private void Form1_Load(object sender, EventArgs e)
+        private async void Form1_Load(object sender, EventArgs e)
         {
             _isLoadingConfig = true;
             _currentConfig = _configStore.LoadConfig(AppendLog);
@@ -53,7 +53,7 @@ namespace TunarrDummyStart
             InitializeChannelStatusCards(_currentConfig.Channels);
             _configStore.ApplyWindowsStartupSetting(_currentConfig.StartWithWindows, writeLog: false, AppendLog);
             SetRunningState(isRunning: false);
-            _ = DetectAndPopulateHwAccelsAsync(_currentConfig.HwAccel);
+            await DetectAndPopulateHwAccelsAsync(_currentConfig.HwAccel);
 
             if (_startHidden)
             {
@@ -66,7 +66,7 @@ namespace TunarrDummyStart
             if (_currentConfig.AutoStartOnLaunch)
             {
                 AppendLog("Auto-start at launch is enabled. Starting keep-alive automatically.");
-                _ = StartRunAsync();
+                await StartRunAsync();
             }
         }
 
@@ -228,13 +228,20 @@ namespace TunarrDummyStart
             try
             {
                 string? ffmpegExe = _ffmpegService.ResolveExecutable(txtFfmpegPath.Text.Trim());
-                List<string> items = new() { "None" };
+                List<string> items = new() { "Auto", "None" };
 
                 if (ffmpegExe is not null)
                 {
                     AppendLog("Detecting hardware acceleration backends...");
                     List<string> backends = await _ffmpegService.DetectHwAccelsAsync(ffmpegExe);
-                    items.AddRange(backends);
+                    foreach (var backend in backends)
+                    {
+                        if (!backend.Equals("None", StringComparison.OrdinalIgnoreCase) && 
+                            !backend.Equals("Auto", StringComparison.OrdinalIgnoreCase))
+                        {
+                            items.Add(backend);
+                        }
+                    }
                     AppendLog(backends.Count > 0
                         ? $"HW Accel detected: {string.Join(", ", backends)}"
                         : "HW Accel: no additional backends found.");
@@ -245,7 +252,7 @@ namespace TunarrDummyStart
                 }
 
                 _detectedHwAccels = items;
-                string selection = preferredSelection ?? "None";
+                string selection = preferredSelection ?? "Auto";
                 cboHwAccel.Items.Clear();
                 foreach (string item in _detectedHwAccels)
                 {
@@ -372,7 +379,7 @@ namespace TunarrDummyStart
                 return;
             }
 
-            string selection = string.IsNullOrWhiteSpace(desiredSelection) ? "None" : desiredSelection.Trim();
+            string selection = string.IsNullOrWhiteSpace(desiredSelection) ? "Auto" : desiredSelection.Trim();
             foreach (object item in cboHwAccel.Items)
             {
                 if (item is string text && text.Equals(selection, StringComparison.OrdinalIgnoreCase))
@@ -1046,7 +1053,7 @@ namespace TunarrDummyStart
 
         public bool StartWithWindows { get; set; }
 
-        public string HwAccel { get; set; } = "None";
+        public string HwAccel { get; set; } = "Auto";
 
         public int ThreadsPerProcess { get; set; }
 
@@ -1079,7 +1086,7 @@ namespace TunarrDummyStart
                 FfmpegPath = string.Empty,
                 AutoStartOnLaunch = false,
                 StartWithWindows = false,
-                HwAccel = "None",
+                HwAccel = "Auto",
                 ThreadsPerProcess = 0,
                 EnableWebserver = true,
                 WebserverPort = 1290,

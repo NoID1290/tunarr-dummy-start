@@ -1197,6 +1197,7 @@ namespace TunarrDummyStart
                         <div class="form-group">
                             <label for="cboHwAccel">Hardware Acceleration</label>
                             <select id="cboHwAccel">
+                                <option value="Auto">Auto</option>
                                 <option value="None">None</option>
                                 <option value="d3d11va">d3d11va</option>
                                 <option value="dxva2">dxva2</option>
