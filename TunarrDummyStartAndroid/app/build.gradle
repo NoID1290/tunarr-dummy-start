@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId "com.noidsoftwork.tunarrdummystart"
-        minSdk 26
+        minSdk 21
         targetSdk 34
         versionCode 1
         versionName project.hasProperty('versionName') ? project.property('versionName') : "1.0.0"

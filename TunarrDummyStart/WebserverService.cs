@@ -115,7 +115,8 @@ namespace TunarrDummyStart
                     DateTimeOffset.UtcNow.AddDays(-1),
                     DateTimeOffset.UtcNow.AddYears(10));
 
-                _serverCertificate = new X509Certificate2(certificate.Export(X509ContentType.Pfx), (string?)null);
+                byte[] pfx = certificate.Export(X509ContentType.Pfx, "password");
+                _serverCertificate = new X509Certificate2(pfx, "password", X509KeyStorageFlags.Exportable);
                 return _serverCertificate;
             }
         }
@@ -206,8 +207,16 @@ namespace TunarrDummyStart
                     {
                         var cert = GetOrCreateCertificate();
                         sslStream = new SslStream(stream, false);
-                        await sslStream.AuthenticateAsServerAsync(cert);
-                        stream = sslStream;
+                        try
+                        {
+                            await sslStream.AuthenticateAsServerAsync(cert);
+                            stream = sslStream;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logMessage($"SSL handshake failed (did you connect via HTTP instead of HTTPS?): {ex.Message}");
+                            return;
+                        }
                     }
 
                     try
@@ -506,11 +515,12 @@ namespace TunarrDummyStart
 
                     await SendErrorResponseAsync(stream, 404, "Not Found");
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    _logMessage($"Web server exception: {ex.Message}");
                     try
                     {
-                        await SendErrorResponseAsync(stream, 500, "Internal Server Error");
+                        await SendErrorResponseAsync(stream, 500, $"Internal Server Error: {ex.Message}");
                     }
                     catch { }
                 }
