@@ -12,9 +12,9 @@
     <Platform>x64</Platform>
     <UseAppHost>true</UseAppHost>
     <RootNamespace>TunarrDummyStart</RootNamespace>
-    <ProductVersion>1.1.6</ProductVersion>
-    <Version>1.1.6</Version>
-    <FileVersion>1.1.6</FileVersion>
+    <ProductVersion>1.1.7</ProductVersion>
+    <Version>1.1.7</Version>
+    <FileVersion>1.1.7</FileVersion>
     <Authors>NoID Softwork</Authors>
     <Company>NoID Softwork</Company>
     <Description>A dummy start for Tunarr development.</Description>
