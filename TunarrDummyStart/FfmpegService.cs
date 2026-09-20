@@ -244,6 +244,7 @@ internal sealed class FfmpegService
                 }
 
                 // Detect V4L2 M2M hardware encoders/decoders
+                // Detect V4L2 M2M hardware devices
                 if (Directory.Exists("/dev"))
                 {
                     string[] videoNodes = Directory.GetFiles("/dev", "video*");
