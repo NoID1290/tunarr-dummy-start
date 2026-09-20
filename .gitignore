@@ -35,6 +35,11 @@ TunarrDummyStart/bin/
 TunarrDummyStart/obj/
 dist/
 build/
+artifacts/
+.dotnet/
+.nuget/
+.cache/
+.local/
 
 
 .continue/prompts/new-prompt-1.md

@@ -1,37 +1,31 @@
 {
   "format": 1,
   "restore": {
-    "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj": {}
+    "/workspace/TunarrDummyStart/TunarrDummyStart.csproj": {}
   },
   "projects": {
-    "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj": {
-      "version": "1.1.8",
+    "/workspace/TunarrDummyStart/TunarrDummyStart.csproj": {
+      "version": "1.1.11",
       "restore": {
-        "projectUniqueName": "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
+        "projectUniqueName": "/workspace/TunarrDummyStart/TunarrDummyStart.csproj",
         "projectName": "TunarrDummyStart",
-        "projectPath": "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
-        "packagesPath": "C:\\Users\\90lec\\.nuget\\packages\\",
-        "outputPath": "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\obj\\",
+        "projectPath": "/workspace/TunarrDummyStart/TunarrDummyStart.csproj",
+        "packagesPath": "/workspace/TunarrDummyStart/.nuget/packages/",
+        "outputPath": "/workspace/TunarrDummyStart/obj/",
         "projectStyle": "PackageReference",
-        "fallbackFolders": [
-          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
-        ],
+        "crossTargeting": true,
         "configFilePaths": [
-          "C:\\Users\\90lec\\AppData\\Roaming\\NuGet\\NuGet.Config",
-          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
-          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+          "/workspace/TunarrDummyStart/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
-          "net8.0-windows"
+          "net8.0"
         ],
         "sources": {
-          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
-          "C:\\Program Files\\dotnet\\library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
-          "net8.0-windows7.0": {
-            "targetAlias": "net8.0-windows",
+          "net8.0": {
+            "targetAlias": "net8.0",
             "projectReferences": {}
           }
         },
@@ -44,22 +38,17 @@
           "enableAudit": "true",
           "auditLevel": "low",
           "auditMode": "direct"
-        },
-        "SdkAnalysisLevel": "10.0.100"
+        }
       },
       "frameworks": {
-        "net8.0-windows7.0": {
-          "targetAlias": "net8.0-windows",
+        "net8.0": {
+          "targetAlias": "net8.0",
           "dependencies": {
             "Microsoft.NET.ILLink.Tasks": {
               "suppressParent": "All",
               "target": "Package",
-              "version": "[8.0.23, )",
+              "version": "[8.0.31, )",
               "autoReferenced": true
-            },
-            "System.ServiceProcess.ServiceController": {
-              "target": "Package",
-              "version": "[10.0.9, )"
             }
           },
           "imports": [
@@ -75,31 +64,24 @@
           "warn": true,
           "downloadDependencies": [
             {
-              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
-              "version": "[8.0.23, 8.0.23]"
+              "name": "Microsoft.AspNetCore.App.Runtime.linux-x64",
+              "version": "[8.0.31, 8.0.31]"
             },
             {
-              "name": "Microsoft.NETCore.App.Runtime.win-x64",
-              "version": "[8.0.23, 8.0.23]"
-            },
-            {
-              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
-              "version": "[8.0.23, 8.0.23]"
+              "name": "Microsoft.NETCore.App.Runtime.linux-x64",
+              "version": "[8.0.31, 8.0.31]"
             }
           ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
-            },
-            "Microsoft.WindowsDesktop.App.WindowsForms": {
-              "privateAssets": "none"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.102/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/share/dotnet/sdk/8.0.425/PortableRuntimeIdentifierGraph.json"
         }
       },
       "runtimes": {
-        "win-x64": {
+        "linux-x64": {
           "#import": []
         }
       }

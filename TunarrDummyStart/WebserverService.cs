@@ -1208,6 +1208,14 @@ namespace TunarrDummyStart
                                 <option value="dxva2">dxva2</option>
                                 <option value="cuda">cuda</option>
                                 <option value="qsv">qsv</option>
+                                <option value="v4l2m2m">v4l2m2m (Raspberry Pi/ARM)</option>
+                                <option value="vaapi">vaapi (Linux/Intel/AMD)</option>
+                                <option value="drm">drm (Direct Rendering)</option>
+                                <option value="rkmpp">rkmpp (Rockchip ARM)</option>
+                                <option value="cuda">cuda (NVIDIA)</option>
+                                <option value="qsv">qsv (Intel QuickSync)</option>
+                                <option value="d3d11va">d3d11va (Windows)</option>
+                                <option value="dxva2">dxva2 (Windows)</option>
                                 <option value="opencl">opencl</option>
                                 <option value="vulkan">vulkan</option>
                             </select>

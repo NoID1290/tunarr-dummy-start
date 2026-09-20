@@ -16,6 +16,7 @@ namespace TunarrDummyStart
         private const string ConfigRegistryPath = @"Software\NoID Softwork\TunarrDummyStart";
 
         private readonly RegistryConfigStore _configStore = new();
+        private readonly ConfigStore _configStore = new();
         private readonly FfmpegService _ffmpegService = new();
         private readonly ChannelRunnerService _channelRunner;
         private readonly Dictionary<int, ChannelStatusCard> _channelStatusCards = new();
@@ -52,6 +53,7 @@ namespace TunarrDummyStart
             ApplyConfigToUi(_currentConfig);
             InitializeChannelStatusCards(_currentConfig.Channels);
             _configStore.ApplyWindowsStartupSetting(_currentConfig.StartWithWindows, writeLog: false, AppendLog);
+            _configStore.ApplyStartupSetting(_currentConfig.StartWithWindows, writeLog: false, AppendLog);
             SetRunningState(isRunning: false);
             await DetectAndPopulateHwAccelsAsync(_currentConfig.HwAccel);
 
@@ -113,6 +115,7 @@ namespace TunarrDummyStart
 
             _configStore.SaveConfig(config);
             _configStore.ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: true, AppendLog);
+            _configStore.ApplyStartupSetting(config.StartWithWindows, writeLog: true, AppendLog);
 
             _runCancellation = new CancellationTokenSource();
             CancellationToken token = _runCancellation.Token;
@@ -161,6 +164,8 @@ namespace TunarrDummyStart
             _configStore.SaveConfig(config);
             _configStore.ApplyWindowsStartupSetting(config.StartWithWindows, writeLog: true, AppendLog);
             AppendLog($"Config saved to Windows Registry (HKCU\\{ConfigRegistryPath})");
+            _configStore.ApplyStartupSetting(config.StartWithWindows, writeLog: true, AppendLog);
+            AppendLog($"Config saved to {_configStore.ConfigFilePath}");
 
             StartWebserverIfEnabled(config);
         }

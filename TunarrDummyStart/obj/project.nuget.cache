@@ -1,15 +1,12 @@
 {
   "version": 2,
-  "dgSpecHash": "ePXUZej/dhY=",
+  "dgSpecHash": "3qEKHWZ9GSI=",
   "success": true,
-  "projectFilePath": "S:\\VScodeProjects\\tunarr-dummy-start\\TunarrDummyStart\\TunarrDummyStart.csproj",
+  "projectFilePath": "/workspace/TunarrDummyStart/TunarrDummyStart.csproj",
   "expectedPackageFiles": [
-    "C:\\Users\\90lec\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.23\\microsoft.net.illink.tasks.8.0.23.nupkg.sha512",
-    "C:\\Users\\90lec\\.nuget\\packages\\system.diagnostics.eventlog\\10.0.9\\system.diagnostics.eventlog.10.0.9.nupkg.sha512",
-    "C:\\Users\\90lec\\.nuget\\packages\\system.serviceprocess.servicecontroller\\10.0.9\\system.serviceprocess.servicecontroller.10.0.9.nupkg.sha512",
-    "C:\\Users\\90lec\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.23\\microsoft.netcore.app.runtime.win-x64.8.0.23.nupkg.sha512",
-    "C:\\Users\\90lec\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.23\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.23.nupkg.sha512",
-    "C:\\Users\\90lec\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.23\\microsoft.aspnetcore.app.runtime.win-x64.8.0.23.nupkg.sha512"
+    "/workspace/TunarrDummyStart/.nuget/packages/microsoft.net.illink.tasks/8.0.31/microsoft.net.illink.tasks.8.0.31.nupkg.sha512",
+    "/workspace/TunarrDummyStart/.nuget/packages/microsoft.netcore.app.runtime.linux-x64/8.0.31/microsoft.netcore.app.runtime.linux-x64.8.0.31.nupkg.sha512",
+    "/workspace/TunarrDummyStart/.nuget/packages/microsoft.aspnetcore.app.runtime.linux-x64/8.0.31/microsoft.aspnetcore.app.runtime.linux-x64.8.0.31.nupkg.sha512"
   ],
   "logs": []
 }

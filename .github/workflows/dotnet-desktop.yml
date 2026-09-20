@@ -33,6 +33,7 @@ jobs:
         }
 
   build:
+  build-windows:
     needs: bump
     if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
     strategy:
@@ -58,13 +59,16 @@ jobs:
 
     - name: Restore the application
       run: dotnet restore .\TunarrDummyStart\TunarrDummyStart.csproj
+      run: dotnet restore .\TunarrDummyStart\TunarrDummyStart.csproj -f net8.0-windows -r win-x64
 
     - name: Build the application
       run: dotnet build .\TunarrDummyStart\TunarrDummyStart.csproj -c ${{ matrix.configuration }} --no-restore
+      run: dotnet build .\TunarrDummyStart\TunarrDummyStart.csproj -c ${{ matrix.configuration }} -f net8.0-windows --no-restore
 
     - name: Publish the application
       if: matrix.configuration == 'Release'
       run: dotnet publish .\TunarrDummyStart\TunarrDummyStart.csproj -c Release --no-restore -o .\artifacts\publish
+      run: dotnet publish .\TunarrDummyStart\TunarrDummyStart.csproj -c Release -f net8.0-windows -r win-x64 --self-contained true -p:PublishSingleFile=true -o .\artifacts\publish
 
     - name: Upload build artifacts
       if: matrix.configuration == 'Release'
@@ -72,6 +76,50 @@ jobs:
       with:
         name: TunarrDummyStart-win-x64
         path: .\artifacts\publish
+        path: .\artifacts\publish\TunarrDummyStart.exe
+
+  build-linux:
+    needs: bump
+    if: always() && (needs.bump.result == 'success' || needs.bump.result == 'skipped')
+    strategy:
+      matrix:
+        rid: [linux-arm64, linux-arm, linux-x64]
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Pull latest changes (if bump occurred)
+      if: needs.bump.result == 'success'
+      run: git pull
+
+    - name: Install .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+
+    - name: Restore the application
+      run: dotnet restore ./TunarrDummyStart/TunarrDummyStart.csproj -f net8.0 -r ${{ matrix.rid }}
+
+    - name: Publish the application
+      run: |
+        dotnet publish ./TunarrDummyStart/TunarrDummyStart.csproj \
+          -c Release \
+          -f net8.0 \
+          -r ${{ matrix.rid }} \
+          --self-contained true \
+          -p:PublishSingleFile=true \
+          -o ./artifacts/publish-${{ matrix.rid }}
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: TunarrDummyStart-${{ matrix.rid }}
+        path: ./artifacts/publish-${{ matrix.rid }}/TunarrDummyStart
 
   build-android:
     needs: bump
@@ -121,6 +169,7 @@ jobs:
 
   release:
     needs: [build, build-android]
+    needs: [build-windows, build-linux, build-android]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -136,6 +185,24 @@ jobs:
       with:
         name: TunarrDummyStart-win-x64
         path: release-win
+
+    - name: Download Linux ARM64 Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: TunarrDummyStart-linux-arm64
+        path: release-linux-arm64
+
+    - name: Download Linux ARM32 Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: TunarrDummyStart-linux-arm
+        path: release-linux-arm
+
+    - name: Download Linux x64 Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: TunarrDummyStart-linux-x64
+        path: release-linux-x64
 
     - name: Download Android Artifact
       uses: actions/download-artifact@v4
@@ -164,7 +231,11 @@ jobs:
     - name: Prepare Assets
       run: |
         mv release-win/TunarrDummyStart.exe ./TunarrDummyStart.exe
+        mv release-linux-arm64/TunarrDummyStart ./TunarrDummyStart-linux-arm64
+        mv release-linux-arm/TunarrDummyStart ./TunarrDummyStart-linux-arm
+        mv release-linux-x64/TunarrDummyStart ./TunarrDummyStart-linux-x64
         mv release-android/*.apk ./TunarrDummyStart-android.apk
+        chmod +x ./TunarrDummyStart-linux-*
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
@@ -177,10 +248,18 @@ jobs:
           ### Downloads:
           - **[TunarrDummyStart.exe](https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}/TunarrDummyStart.exe)** (Windows WinForms executable)
           - **[TunarrDummyStart-android.apk](https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}/TunarrDummyStart-android.apk)** (Android application package, unsigned release)
+          - **[TunarrDummyStart.exe](https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}/TunarrDummyStart.exe)** (Windows x64 GUI)
+          - **[TunarrDummyStart-linux-arm64](https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}/TunarrDummyStart-linux-arm64)** (Linux ARM64 / Raspberry Pi 4/5 / ARM servers)
+          - **[TunarrDummyStart-linux-arm](https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}/TunarrDummyStart-linux-arm)** (Linux ARMv7 / 32-bit ARM)
+          - **[TunarrDummyStart-linux-x64](https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}/TunarrDummyStart-linux-x64)** (Linux x64 / AMD64)
+          - **[TunarrDummyStart-android.apk](https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}/TunarrDummyStart-android.apk)** (Android companion app)
         draft: false
         prerelease: false
         files: |
           TunarrDummyStart.exe
+          TunarrDummyStart-linux-arm64
+          TunarrDummyStart-linux-arm
+          TunarrDummyStart-linux-x64
           TunarrDummyStart-android.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

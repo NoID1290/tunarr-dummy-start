@@ -1,0 +1,23 @@
+[Unit]
+Description=Tunarr Dummy Start Keep-Alive Daemon
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# Change WorkingDirectory and ExecStart to your actual installation path
+WorkingDirectory=/opt/tunarr-dummy-start
+ExecStart=/opt/tunarr-dummy-start/TunarrDummyStart --config /etc/tunarr-dummy-start/config.json --start
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+# Security sandbox options
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+
